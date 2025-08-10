@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Quant Prep Trainer v3 – Single File (Focus + Auto-Advance)</title>
+  <style>
+    :root{--bg:#0f1220;--panel:#151936;--accent:#7bd88f;--accent2:#8bd3ff;--text:#eef1ff;--muted:#a8b0d3;--danger:#ff6b6b;--warn:#ffd166}
+    *{box-sizing:border-box}html,body{height:100%}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--text);
+         background:radial-gradient(1000px 600px at 10% -10%, #1a1f45 0%, #0f1220 60%)}
+    header{position:sticky;top:0;z-index:5;backdrop-filter:blur(8px);background:rgb(15 18 32 / 72%);
+           border-bottom:1px solid #232955;padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    header h1{margin:0;font-size:18px;letter-spacing:.3px}
+    nav{display:flex;gap:8px;flex-wrap:wrap}
+    nav button{background:var(--panel);color:var(--text);border:1px solid #232955;padding:8px 12px;border-radius:10px;cursor:pointer}
+    nav button.active{border-color:var(--accent);box-shadow:0 0 0 2px rgb(123 216 143 / .25) inset}
+    main{padding:16px;max-width:900px;margin:0 auto}
+    .card{background:linear-gradient(180deg,#161a3a 0%,#10142c 100%);border:1px solid #232955;border-radius:14px;padding:16px;margin:10px 0;box-shadow:0 8px 24px rgb(0 0 0 / .25)}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+    .grid{display:grid;gap:12px}.grid.cols-2{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+    input,select{width:100%;background:#0c1030;color:var(--text);border:1px solid #232955;padding:12px 14px;border-radius:10px;outline:none;font-size:18px}
+    input.big{font-size:22px;padding:14px 16px}
+    .btn{background:var(--accent);color:#0a1320;border:0;padding:12px 16px;border-radius:10px;cursor:pointer;font-weight:600}
+    .btn.secondary{background:var(--accent2)}.btn.ghost{background:transparent;color:var(--text);border:1px solid #2a316a}.btn.danger{background:var(--danger);color:white}
+    .muted{color:var(--muted)} .center{text-align:center}
+    .pill{padding:6px 10px;border:1px solid #2a316a;border-radius:999px;color:var(--muted)}
+    .timer{font-variant-numeric:tabular-nums}
+    .question{font-size:28px;margin:8px 0 12px}
+    table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+    th,td{padding:8px 10px;border-bottom:1px solid #232955}
+    tr:hover td{background:#101536}
+    .ok{color:var(--accent)}.bad{color:var(--danger)}.warn{color:var(--warn)}
+    kbd{background:#0c1030;border:1px solid #232955;border-radius:6px;padding:2px 6px}
+
+    /* Focus Mode: blendet Header & Tabs aus, große UI, Input am unteren Rand */
+    body.focus header{display:none}
+    body.focus main{padding:8px}
+    .focus-shell{min-height:calc(100vh - 16px);display:flex;flex-direction:column;gap:8px}
+    .focus-top{display:flex;gap:8px;flex-wrap:wrap;justify-content:space-between;align-items:center}
+    .focus-main{flex:1;display:flex;align-items:center;justify-content:center}
+    .focus-bottom{position:sticky;bottom:0;background:rgb(16 20 44 / .8);backdrop-filter:blur(6px);border:1px solid #232955;border-radius:12px;padding:8px}
+    .inline-buttons{display:flex;gap:8px;align-items:center}
+    .minus-btn{min-width:48px}
+  </style>
+</head>
+<body>
+<header>
+  <h1>🧮 Quant Prep Trainer v3</h1>
+  <nav id="tabs"></nav>
+  <div style="margin-left:auto"></div>
+  <button class="btn ghost" id="exportJson">Export JSON</button>
+  <button class="btn ghost" id="exportCsv">Export CSV</button>
+  <button class="btn ghost" id="reset">Reset</button>
+</header>
+<main id="app"></main>
+
+<script>
+const $=(s,e=document)=>e.querySelector(s);
+const now=()=>performance.now();
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const fmtMs=ms=>(ms/1000).toFixed(2)+'s';
+function download(name, data, type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type}));a.download=name;a.click();URL.revokeObjectURL(a.href);}
+function enterFocus(){ document.body.classList.add('focus'); window.scrollTo(0,0); }
+function exitFocus(){ document.body.classList.remove('focus'); }
+function addMinusButton(container, input){
+  const b=document.createElement('button'); b.type='button'; b.className='btn ghost minus-btn'; b.textContent='−';
+  b.onclick=()=>{
+    const v=input.value.trim();
+    if(v.startsWith('-')) input.value=v.slice(1);
+    else input.value = v? ('-'+v) : '-';
+    input.focus(); input.dispatchEvent(new Event('input',{bubbles:true}));
+  };
+  (container.querySelector('.inline-buttons')||container).appendChild(b);
+  return b;
+}
+const DBKEY='qprep_v3'; const DEDUPKEY='qprep_dedup_v1';
+let DB = load(DBKEY, {sessions:[], highscores:{}});
+let DEDUP = load(DEDUPKEY, {});
+function load(key, def){try{ return JSON.parse(localStorage.getItem(key)) || structuredClone(def);}catch(e){ return JSON.parse(JSON.stringify(def));}}
+function saveDB(){ localStorage.setItem(DBKEY, JSON.stringify(DB)); }
+function saveDedup(){ localStorage.setItem(DEDUPKEY, JSON.stringify(DEDUP)); }
+function pushSession(entry){
+  DB.sessions.push({...entry, date:new Date().toISOString()});
+  const k = entry.module;
+  const score = entry.stats?.score ?? entry.stats?.correct ?? 0;
+  if(!(k in DB.highscores) || score>DB.highscores[k].score){
+    DB.highscores[k] = {score, when:new Date().toISOString(), detail:entry.stats};
+  }
+  saveDB();
+}
+function dedupInit(mod){ if(!DEDUP[mod]) DEDUP[mod] = {list:[], set:{}}; }
+function dedupHas(mod, sig){ dedupInit(mod); return !!DEDUP[mod].set[sig]; }
+function dedupAdd(mod, sig, cap=50000){
+  dedupInit(mod);
+  if(!DEDUP[mod].set[sig]){
+    DEDUP[mod].set[sig]=1; DEDUP[mod].list.push(sig);
+    if(DEDUP[mod].list.length>cap){ const old=DEDUP[mod].list.shift(); delete DEDUP[mod].set[old]; }
+    saveDedup();
+  }
+}
+function dedupFindNew(mod, genFn, sigFn, maxTries=200){
+  for(let t=0;t<maxTries;t++){
+    const item = genFn(); const sig = sigFn(item);
+    if(!dedupHas(mod, sig)){ dedupAdd(mod, sig); return item; }
+  }
+  return genFn();
+}
+const PRESETS_MENTAL={
+  blue:{label:'Blue – Akuna (80/8)', n:80, seconds:480, scoring:{correct:+1, wrong:-1, skip:0}, target:60},
+  brown:{label:'Brown – Maven (40/6)', n:40, seconds:360, scoring:{correct:+1, wrong:0,  skip:0}, target:34},
+  red:{label:'Red – Flow (75/8)',     n:75, seconds:480, scoring:{correct:+1, wrong:-1, skip:0}, target:53}
+};
+const PRESETS_SEQ={ akuna:{n:10, seconds:300, target:8}, maven:{n:15, seconds:900, target:12}, flow:{n:26, seconds:1500, target:18} };
+const TARGET_TASK = {net:25, acc:90};
+const TARGET_PIN  = {total:24};
+const TARGET_MMG  = {pnlRate:0.02};
+const TARGET_BRAIN= {acc:80, medSec:120};
+const TARGET_FERMI= {withinFactor:10, rate:80, mm_hit:70};
+function card(html=''){ const d=document.createElement('div'); d.className='card'; d.innerHTML=html; return d; }
+function formRow(items){ const r=document.createElement('div'); r.className='row grid cols-2'; items.forEach(x=>r.appendChild(x)); return r; }
+function btn(label, onClick, cls='btn'){ const b=document.createElement('button'); b.className=cls; b.textContent=label; b.onclick=onClick; return b; }
+function numberField(label, min, max, step, value, onInput, allowFloat=false){
+  const w=document.createElement('div'); const id='n'+Math.random().toString(36).slice(2);
+  w.innerHTML=`<label for="${id}">${label}</label>
+  <div class="inline-buttons">
+    <input id="${id}" ${allowFloat?'':"inputmode='numeric'"} type="number" min="${min}" max="${max}" step="${step}" value="${value}">
+  </div>`;
+  const el=w.querySelector('input'); el.addEventListener('input', e=>onInput(allowFloat?parseFloat(e.target.value):parseInt(e.target.value))); return w;
+}
+function selectField(label, options, onChange, value){
+  const w=document.createElement('div'); const id='s'+Math.random().toString(36).slice(2);
+  w.innerHTML=`<label for="${id}">${label}</label><select id="${id}">${options.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select>`;
+  const sel=w.querySelector('select'); sel.value=value; sel.addEventListener('change', e=>onChange(e.target.value)); return w;
+}
+function checkboxField(label, checked, onChange){
+  const w=document.createElement('div'); const id='c'+Math.random().toString(36).slice(2);
+  w.innerHTML=`<label><input id="${id}" type="checkbox" ${checked?"checked":""}> ${label}</label>`;
+  w.querySelector('#'+id).addEventListener('change', e=>onChange(e.target.checked)); return w;
+}
+function table(rows, headers){
+  return `<table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+  <tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${(c??"").toString().replace(/[<>&]/g, s=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[s]))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+function title(id){ return {mental:'Mental Math', seq:'Sequences', task:'Task Switch', pin:'Pincode', mmg:'Market Making', brain:'Brainteasers & Fermi', stats:'Statistik'}[id] || id; }
+function highCard(moduleId){ const best=DB.highscores[moduleId]; const el=card('<h3>🏆 Highscore</h3>'); el.insertAdjacentHTML('beforeend', best? `<div class="pill">Score: <b>${best.score}</b> · ${new Date(best.when).toLocaleString()}</div>` : '<div class="muted">Noch kein Highscore.</div>'); return el; }
+
+/* ========= Registration & Shell ========= */
+const modules=[
+  {id:'mental', title:'Mental Math', view:viewMental},
+  {id:'seq', title:'Sequences', view:viewSequences},
+  {id:'task', title:'Task Switch', view:viewTaskSwitch},
+  {id:'pin', title:'Pincode (3×1min)', view:viewPincode},
+  {id:'mmg', title:'Market Making', view:viewMM},
+  {id:'brain', title:'Brainteasers & Fermi', view:viewBrainFermi},
+  {id:'stats', title:'Statistik', view:viewStats},
+  {id:'settings', title:'Einstellungen', view:viewSettings}
+];
+let currentTab = localStorage.getItem('qprep_tab') || 'mental';
+function renderTabs(){
+  const nav=$('#tabs'); nav.innerHTML='';
+  modules.forEach(m=>{
+    const b=document.createElement('button'); b.textContent=m.title;
+    b.className = currentTab===m.id? 'active':''; b.onclick = ()=>{ currentTab=m.id; localStorage.setItem('qprep_tab', currentTab); render(); };
+    nav.appendChild(b);
+  });
+}
+function render(){ renderTabs(); const root=$('#app'); root.innerHTML=''; (modules.find(x=>x.id===currentTab)||modules[0]).view(root); }
+render();
+
+/* Header buttons */
+document.getElementById('exportJson').onclick=()=>download(`qprep_stats_${new Date().toISOString().slice(0,10)}.json`, JSON.stringify(DB,null,2), 'application/json');
+document.getElementById('exportCsv').onclick=()=>{
+  const rows=[['module','date','score','correct','total','avgMs','detail_json','settings_json']];
+  for(const s of DB.sessions){
+    rows.push([s.module, s.date, s.stats?.score??'', s.stats?.correct??'', s.stats?.total??'', s.stats?.avgMs??'', JSON.stringify(s.perQuestion||[]), JSON.stringify(s.settings||{})]);
+  }
+  const csv = rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n');
+  download(`qprep_stats_${new Date().toISOString().slice(0,10)}.csv`, csv, 'text/csv');
+};
+document.getElementById('reset').onclick=()=>{ if(confirm('Wirklich alle lokalen Daten (Scores, Sessions, Dedup) löschen?')){ localStorage.removeItem(DBKEY); localStorage.removeItem(DEDUPKEY); DB={sessions:[],highscores:{}}; DEDUP={}; render(); } };
+
+/* ========= MENTAL MATH ========= */
+function viewMental(root){
+  root.appendChild(card('<h2>🧮 Mental Math</h2><div class="muted">Auto-Advance, Fokus-Ansicht, Minus-Button.</div>'));
+  const cfg={preset:'blue', ...PRESETS_MENTAL.blue, auto:true};
+  const panel=card(); panel.appendChild(formRow([
+    selectField('Preset', Object.entries(PRESETS_MENTAL).map(([k,p])=>[k,p.label]), v=>{ Object.assign(cfg, {preset:v, ...PRESETS_MENTAL[v]}); } , cfg.preset),
+    numberField('Fragen',5,200,1,cfg.n,v=>cfg.n=v),
+    numberField('Zeit (s)',60,1800,10,cfg.seconds,v=>cfg.seconds=v),
+    selectField('Bewertung', [['+1/-1','+1 richtig, -1 falsch'],['+1/0','+1 richtig, 0 falsch']], val=>{ cfg.scoring = (val==='+1/-1')?{correct:+1,wrong:-1,skip:0}:{correct:+1,wrong:0,skip:0}; }, '+1/-1'),
+    checkboxField('Auto-Advance', cfg.auto, v=>cfg.auto=v),
+    numberField('Zielwert (Ready=100%)',1,200,1,cfg.target,v=>cfg.target=v),
+    btn('Start', ()=>run())
+  ])); root.appendChild(panel); root.appendChild(highCard('mental'));
+
+  function genQ(){
+    const r=(a,b)=>Math.floor(Math.random()*(b-a+1))+a; const pick=a=>a[Math.floor(Math.random()*a.length)];
+    const types=['nestedDiv','mulAdd','addMul','quick','mul']; const t=pick(types);
+    let a,b,c,ans,txt,sign;
+    if(t==='nestedDiv'){ c=r(2,15); b=r(2,300); const inner=Math.max(1,Math.floor(b/c)); const k=r(2,80); a=inner*k; ans=a/inner; txt=`${a} / (${b} / ${c})`; }
+    else if(t==='mulAdd'){ a=r(10,900); b=r(2,99); c=r(3,300); ans=a*b+c; txt=`${a} × ${b} + ${c}`; }
+    else if(t==='addMul'){ a=r(10,900); b=r(2,99); c=r(3,300); ans=a+b*c; txt=`${a} + ${b} × ${c}`; }
+    else if(t==='quick'){ a=r(200,2000); b=r(50,600); sign = Math.random()<.5 ? '+' : '−'; ans = sign==='+' ? a+b : a-b; txt=`${a} ${sign} ${b}`; }
+    else { a=r(12,99); b=r(12,99); ans=a*b; txt=`${a} × ${b}`; }
+    return {t,a,b,c,ans,txt,sign};
+  }
+  function sigOf(q){ return `${q.t}|${q.a}|${q.b}|${q.c||0}|${q.sign||''}`; }
+
+  function run(){
+    enterFocus();
+    const totalMs=cfg.seconds*1000;
+    const ui=card(`<div class="focus-shell">
+      <div class="focus-top"><span class="pill">Preset: ${PRESETS_MENTAL[cfg.preset]?.label || 'custom'}</span><span class="pill">Zeit: <span id="t" class="timer"></span></span><span class="pill">Frage: <b id="qc">1</b> / ${cfg.n}</span></div>
+      <div class="focus-main"><div class="question" id="q"></div></div>
+      <div class="focus-bottom">
+        <div class="row">
+          <div style="flex:1">
+            <label>Antwort</label>
+            <div class="inline-buttons"><input class="big" id="a" inputmode="decimal" placeholder="Zahl tippen & Enter"></div>
+          </div>
+          <button class="btn" id="ok">OK</button>
+          <button class="btn ghost" id="skip">Skip</button>
+          <button class="btn ghost" id="pause">Pause</button>
+          <button class="btn danger" id="abort">Abbrechen</button>
+        </div>
+        <div class="muted" id="info"></div>
+      </div>
+    </div>`);
+    root.appendChild(ui);
+
+    const el={t:ui.querySelector('#t'),qc:ui.querySelector('#qc'),q:ui.querySelector('#q'),a:ui.querySelector('#a'),ok:ui.querySelector('#ok'),skip:ui.querySelector('#skip'),pause:ui.querySelector('#pause'),abort:ui.querySelector('#abort'),info:ui.querySelector('#info')};
+    addMinusButton(ui, el.a);
+    let i=0, correct=0, score=0, per=[], cur=null;
+    let paused=false, pauseT=0, tStart=performance.now(), tPause=0, running=true, qStart=now();
+
+    function tick(){ let tNow=performance.now(); if(paused) tNow=tPause;
+      const used=tNow-tStart-pauseT; const left=Math.max(0,totalMs-used);
+      el.t.textContent=(left/1000).toFixed(1)+'s'; if(left<=0&&running){finish();return;} if(running) requestAnimationFrame(tick);
+    }
+    function next(){
+      if(i>=cfg.n){ finish(); return; }
+      cur = dedupFindNew('mental', genQ, sigOf);
+      el.q.textContent = cur.txt+' = ?'; el.a.value=''; el.a.focus(); el.qc.textContent = String(i+1);
+      el.info.textContent = `Bewertung: +${cfg.scoring.correct} / ${cfg.scoring.wrong>=0?'+':''}${cfg.scoring.wrong}`;
+      qStart=now();
+    }
+    function submit(kind){
+      const ms=Math.round(now()-qStart);
+      const raw=el.a.value.trim(); const user=(kind==='skip'||raw==='')?null:Number(raw.replace(',','.'));
+      const ok = (user!==null && Math.abs(user-cur.ans)<1e-9); if(ok) correct++;
+      const delta = ok? cfg.scoring.correct : (user===null? cfg.scoring.skip : cfg.scoring.wrong); score += delta;
+      per.push({q:cur.txt, user, ans:cur.ans, correct:ok, ms});
+      i++; next();
+    }
+    function pause(){ if(!paused){paused=true; tPause=performance.now(); el.pause.textContent='Resume';} else {paused=false; pauseT += performance.now()-tPause; el.pause.textContent='Pause'; requestAnimationFrame(tick);} }
+    function abort(){ if(confirm('Ohne Speichern beenden?')){ running=false; exitFocus(); ui.innerHTML='<div class="card">Abgebrochen – nicht gespeichert.</div>'; } }
+    function finish(){
+      running=false; exitFocus();
+      const avg = per.length? Math.round(per.reduce((a,x)=>a+x.ms,0)/per.length):0;
+      const stats={correct,total:cfg.n,avgMs:avg,score};
+      const target = cfg.target || cfg.n; const readiness = clamp(Math.round((Math.max(score,correct)/target)*100),0,200);
+      pushSession({module:'mental',preset:cfg.preset,stats,perQuestion:per,settings:{...cfg}});
+      const rows=[['#','question','your','correct','ms']]; per.forEach((x,j)=>rows.push([j+1,x.q,x.user==null?'':x.user,x.ans,x.ms]));
+      const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+      const txt = per.map((x,j)=>`${j+1}. ${x.q} | your=${x.user==null?'':x.user} | correct=${x.ans} | ${x.correct?'OK':'X'} | ${x.ms}ms`).join('\n');
+      ui.innerHTML = `<h3>Ergebnis</h3>
+        <div class="row">
+          <span class="pill">Richtig: <b class="ok">${stats.correct}</b> / ${stats.total}</span>
+          <span class="pill">Score: <b>${stats.score}</b></span>
+          <span class="pill">Ø Zeit: <b>${fmtMs(stats.avgMs)}</b></span>
+          <span class="pill">Ziel: <b>${target}</b></span>
+          <span class="pill">Ready: <b>${readiness}%</b></span>
+        </div>
+        <div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div>
+        ${table(per.map((x,idx)=>[idx+1,x.q,x.user==null?'—':x.user,x.ans,(x.ms/1000).toFixed(2)+'s',x.correct?'✅':'❌']),['#','Frage','Deine','Korrekt','Zeit','OK'])} `;
+      ui.querySelector('#dlCsv').onclick=()=>download(`mental_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`, csv, 'text/csv');
+      ui.querySelector('#dlTxt').onclick=()=>download(`mental_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`, txt, 'text/plain');
+      render();
+    }
+
+    el.ok.onclick=()=>submit('ok'); el.skip.onclick=()=>submit('skip'); el.pause.onclick=pause; el.abort.onclick=abort;
+    el.a.addEventListener('keydown', e=>{ if(e.key==='Enter') submit('ok'); });
+    el.a.addEventListener('input', ()=>{ if(!cfg.auto) return; const raw=el.a.value.trim(); if(!raw) return; const v=Number(raw.replace(',','.')); if(Math.abs(v - (cur?.ans??NaN))<1e-9) submit('ok'); });
+    requestAnimationFrame(tick); next();
+  }
+}
+
+/* ========= SEQUENCES ========= */
+function viewSequences(root){
+  root.appendChild(card('<h2>🔗 Sequences</h2><div class="muted">Auto-Advance, Fokus-Ansicht, Minus-Button.</div>'));
+  const cfg={preset:'akuna', ...PRESETS_SEQ.akuna};
+  const panel=card(); panel.appendChild(formRow([
+    selectField('Preset', [['akuna','Akuna 10/5'],['maven','Maven 15/15'],['flow','Flow 26/25']], v=>{ Object.assign(cfg,{preset:v, ...PRESETS_SEQ[v]}); }, cfg.preset),
+    numberField('Fragen',3,80,1,cfg.n,v=>cfg.n=v),
+    numberField('Zeit (s)',60,3600,10,cfg.seconds,v=>cfg.seconds=v),
+    numberField('Ziel (Ready=100%)',1,80,1,cfg.target,v=>cfg.target=v),
+    btn('Start', ()=>run())
+  ])); root.appendChild(panel); root.appendChild(highCard('seq'));
+
+  function genSeq(){
+    const r=(a,b)=>Math.floor(Math.random()*(b-a+1))+a; const pick=a=>a[Math.floor(Math.random()*a.length)];
+    const types=['arith','geom','alt','fib']; const t=pick(types);
+    let seq=[], next;
+    if(t==='arith'){ const a0=r(-20,30), d=r(-9,12); for(let i=0;i<5;i++) seq.push(a0+i*d); next=a0+5*d; }
+    else if(t==='geom'){ const a0=r(1,9), q=pick([2,3,4,5]); for(let i=0;i<5;i++) seq.push(a0*Math.pow(q,i)); next=a0*Math.pow(q,5); }
+    else if(t==='alt'){ const a0=r(-9,9), d=r(2,12); for(let i=0;i<5;i++) seq.push(i%2==0? a0+i*d : a0-i*d); next=(5%2==0? a0+5*d : a0-5*d); }
+    else { const a0=r(1,9), a1=r(1,9); seq=[a0,a1]; for(let i=2;i<5;i++) seq.push(seq[i-1]+seq[i-2]); next=seq[3]+seq[4]; }
+    return {t, seq, next};
+  }
+  function sigOf(s){ return `${s.t}|${s.seq.join(",")}`; }
+
+  function run(){
+    enterFocus();
+    const totalMs=cfg.seconds*1000; const ui=card(`<div class="focus-shell">
+      <div class="focus-top"><span class="pill">Preset: ${cfg.preset}</span><span class="pill">Zeit: <span id="t" class="timer"></span></span><span class="pill">Frage: <b id="qc">1</b> / ${cfg.n}</span></div>
+      <div class="focus-main"><div class="question" id="q"></div></div>
+      <div class="focus-bottom">
+        <div class="row">
+          <div style="flex:1">
+            <label>Nächstes Element</label>
+            <div class="inline-buttons"><input class="big" id="a" inputmode="decimal" placeholder="Zahl tippen & Enter"></div>
+          </div>
+          <button class="btn" id="ok">OK</button>
+          <button class="btn ghost" id="skip">Skip</button>
+          <button class="btn ghost" id="pause">Pause</button>
+          <button class="btn danger" id="abort">Abbrechen</button>
+        </div>
+      </div>
+    </div>`);
+    root.appendChild(ui);
+    const el={t:ui.querySelector('#t'),qc:ui.querySelector('#qc'),q:ui.querySelector('#q'),a:ui.querySelector('#a'),ok:ui.querySelector('#ok'),skip:ui.querySelector('#skip'),pause:ui.querySelector('#pause'),abort:ui.querySelector('#abort')};
+    addMinusButton(ui, el.a);
+
+    let i=0, correct=0, per=[], cur=null; let paused=false, pauseT=0, tStart=performance.now(), tPause=0, running=true, qStart=now();
+
+    function tick(){ let tNow=performance.now(); if(paused) tNow=tPause; const used=tNow-tStart-pauseT; const left=Math.max(0,totalMs-used);
+      el.t.textContent=(left/1000).toFixed(1)+'s'; if(left<=0&&running){finish();return;} if(running) requestAnimationFrame(tick); }
+    function next(){ if(i>=cfg.n){finish();return;} cur=dedupFindNew('seq', genSeq, sigOf); el.q.textContent=cur.seq.join(' , ')+' , ?'; el.a.value=''; el.a.focus(); el.qc.textContent=String(i+1); qStart=now(); }
+    function submit(kind){ const ms=Math.round(now()-qStart); const raw=el.a.value.trim(); const user=(kind==='skip'||raw==='')?null:Number(raw.replace(',','.')); const ok=(user!==null && Math.abs(user-cur.next)<1e-9); if(ok)correct++; per.push({q:cur.seq.join(', '), user, ans:cur.next, correct:ok, ms}); i++; next(); }
+    function pause(){ if(!paused){paused=true;tPause=performance.now();el.pause.textContent='Resume';} else {paused=false; pauseT+=performance.now()-tPause; el.pause.textContent='Pause'; requestAnimationFrame(tick);} }
+    function abort(){ if(confirm('Ohne Speichern beenden?')){ running=false; exitFocus(); ui.innerHTML='<div class="card">Abgebrochen – nicht gespeichert.</div>'; } }
+    function finish(){ running=false; exitFocus(); const avg=per.length? Math.round(per.reduce((a,x)=>a+x.ms,0)/per.length):0; const stats={correct,total:cfg.n, avgMs:avg, score:correct};
+      const readiness = clamp(Math.round((correct/(cfg.target||cfg.n))*100),0,200);
+      pushSession({module:'seq',preset:cfg.preset,stats,perQuestion:per,settings:{...cfg}});
+      const rows=[['#','sequence','your','correct','ms']]; per.forEach((x,j)=>rows.push([j+1,x.q,x.user==null?'':x.user,x.ans,x.ms]));
+      const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+      const txt=per.map((x,j)=>`${j+1}. [${x.q}] -> your=${x.user==null?'':x.user} | correct=${x.ans} | ${x.correct?'OK':'X'} | ${x.ms}ms`).join('\n');
+      ui.innerHTML = `<h3>Ergebnis</h3><div class="row"><span class="pill">Richtig: <b class="ok">${correct}</b> / ${cfg.n}</span><span class="pill">Ø Zeit: <b>${fmtMs(avg)}</b></span><span class="pill">Ready: <b>${readiness}%</b></span></div>
+        <div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div>
+        ${table(per.map((x,idx)=>[idx+1,x.q,x.user==null?'—':x.user,x.ans,(x.ms/1000).toFixed(2)+'s',x.correct?'✅':'❌']),['#','Sequenz','Deine','Korrekt','Zeit','OK'])}`;
+      ui.querySelector('#dlCsv').onclick=()=>download(`seq_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,'text/csv');
+      ui.querySelector('#dlTxt').onclick=()=>download(`seq_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`,txt,'text/plain');
+      render();
+    }
+    el.ok.onclick=()=>submit('ok'); el.skip.onclick=()=>submit('skip'); el.pause.onclick=pause; el.abort.onclick=abort; el.a.addEventListener('keydown',e=>{ if(e.key==='Enter') submit('ok'); });
+    el.a.addEventListener('input', ()=>{ const raw=el.a.value.trim(); if(!raw) return; const v=Number(raw.replace(',','.')); if(Math.abs(v - (cur?.next??NaN))<1e-9) submit('ok'); });
+    requestAnimationFrame(tick); next();
+  }
+}
+
+/* ========= PINCODE 3×1min ========= */
+function viewPincode(root){
+  root.appendChild(card('<h2>🔒 Pincode (3×1min)</h2><div class="muted">Auto-Advance bei korrekter Eingabe. Fokus-Ansicht. iPhone-Tastatur bleibt offen.</div>'));
+  const cfg={roundSecs:60, target:TARGET_PIN.total};
+  const panel=card(); panel.appendChild(formRow([
+    numberField('Sek./Runde',30,120,5,cfg.roundSecs,v=>cfg.roundSecs=v),
+    numberField('Ziel gesamt (Ready=100%)',10,30,1,cfg.target,v=>cfg.target=v),
+    btn('Start', ()=>run())
+  ])); root.appendChild(panel); root.appendChild(highCard('pin'));
+
+  const modes=[{id:'repeat', label:'Repeat'}, {id:'reverse',label:'Reverse'}, {id:'sort',label:'Sort'}];
+  function genSeq(len){ const bytes = new Uint8Array(len); crypto.getRandomValues(bytes); return Array.from(bytes, x=>x%10).join(''); }
+  function sigOf(s){ return `${s.mode}|${s.seq}`; }
+  function transform(mode, s){ if(mode==='repeat') return s; if(mode==='reverse') return s.split('').reverse().join(''); if(mode==='sort') return s.split('').sort((a,b)=>a.localeCompare(b)).join(''); return s; }
+
+  function run(){
+    enterFocus();
+    const ui=card(`<div class="focus-shell">
+      <div class="focus-top"><span class="pill">Zeit: <span id="t" class="timer"></span></span><span class="pill">Runde <b id="r">1</b> / 3</span><span class="pill">Punkte: <b id="sc">0</b></span></div>
+      <div class="focus-main"><div class="question center" id="show" style="letter-spacing:6px;font-weight:700"></div></div>
+      <div class="focus-bottom">
+        <div class="row">
+          <div style="flex:1">
+            <label>Eingabe</label>
+            <div class="inline-buttons"><input class="big" id="a" inputmode="numeric" pattern="[0-9]*" placeholder="Zahl & Enter"></div>
+          </div>
+          <button class="btn" id="ok">OK</button>
+          <button class="btn ghost" id="pause">Pause</button>
+          <button class="btn danger" id="abort">Abbrechen</button>
+        </div>
+        <div class="muted" id="hint"></div>
+      </div>
+    </div>`);
+    root.appendChild(ui);
+
+    const el={t:ui.querySelector('#t'),r:ui.querySelector('#r'),sc:ui.querySelector('#sc'),show:ui.querySelector('#show'),a:ui.querySelector('#a'),ok:ui.querySelector('#ok'),pause:ui.querySelector('#pause'),abort:ui.querySelector('#abort'),hint:ui.querySelector('#hint')};
+    let round=0, score=0, per=[]; let paused=false, pauseT=0, tStart=performance.now(), tPause=0, running=true;
+    let roundEnd=0, cur=null, showT=0, length=3;
+
+    function startRound(){ round++; if(round>3){ return finish(); }
+      el.r.textContent=String(round);
+      tStart=performance.now(); pauseT=0; roundEnd = tStart + cfg.roundSecs*1000;
+      el.hint.textContent = `Modus: ${modes[round-1].label}`;
+      nextItem();
+      requestAnimationFrame(tick);
+    }
+    function tick(){ let tNow=performance.now(); if(paused)tNow=tPause; const left=Math.max(0,roundEnd - (tNow - pauseT)); el.t.textContent=(left/1000).toFixed(1)+'s'; if(left<=0&&running){ startRound(); return; } if(running) requestAnimationFrame(tick); }
+    function nextItem(){
+      length = Math.min(12, 3 + Math.floor(score/3));
+      const seq = dedupFindNew('pin', ()=>({mode:modes[round-1].id, seq:genSeq(length)}), sigOf);
+      cur = seq; el.show.textContent = seq.seq;
+      // Keyboard offen halten: NICHT blur(); stattdessen readOnly + Fokus
+      el.a.value='';
+      el.a.readOnly = true;
+      el.a.focus();
+      showT=now();
+      setTimeout(()=>{ if(!running) return; el.show.textContent = '•'.repeat(seq.seq.length); el.a.readOnly = false; el.a.focus(); }, 1200 + seq.seq.length*80);
+    }
+    function submit(){
+      const ms=Math.round(now()-showT);
+      const need = transform(cur.mode, cur.seq);
+      const user = el.a.value.trim();
+      const ok = (user===need);
+      if(ok) score++; el.sc.textContent=score;
+      per.push({round, mode:cur.mode, seq:cur.seq, need, user, ok, ms});
+      nextItem();
+    }
+    function pause(){ if(!paused){paused=true;tPause=performance.now();el.pause.textContent='Resume';} else {paused=false; pauseT += performance.now()-tPause; el.pause.textContent='Pause'; requestAnimationFrame(tick);} }
+    function abort(){ if(confirm('Ohne Speichern beenden?')){ running=false; exitFocus(); ui.innerHTML='<div class="card">Abgebrochen – nicht gespeichert.</div>'; } }
+    function finish(){
+      running=false; exitFocus();
+      const total=per.filter(x=>x.round<=3).length; const correct=per.filter(x=>x.ok).length;
+      const ready = clamp(Math.round((correct/(cfg.target||30))*100),0,200);
+      const avg = per.length? Math.round(per.reduce((a,x)=>a+x.ms,0)/per.length):0;
+      pushSession({module:'pin', stats:{correct,total,avgMs:avg,score:score}, perQuestion:per, settings:{...cfg}});
+      const rows=[['#','round','mode','seq','need','user','ok','ms']]; per.forEach((x,j)=>rows.push([j+1,x.round,x.mode,x.seq,x.need,x.user,x.ok?1:0,x.ms]));
+      const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+      const txt=per.map((x,j)=>`${j+1}. [R${x.round}|${x.mode}] ${x.seq} -> need=${x.need}, user=${x.user} | ${x.ok?'OK':'X'} | ${x.ms}ms`).join('\n');
+      ui.innerHTML = `<h3>Ergebnis</h3><div class="row"><span class="pill">Korrekt: <b class="ok">${correct}</b> / ${total}</span><span class="pill">Ø Zeit: <b>${fmtMs(avg)}</b></span><span class="pill">Ready: <b>${ready}%</b></span></div>
+      <div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div>`;
+      ui.querySelector('#dlCsv').onclick=()=>download(`pincode_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,'text/csv');
+      ui.querySelector('#dlTxt').onclick=()=>download(`pincode_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`,txt,'text/plain');
+      render();
+    }
+    el.ok.onclick=submit; el.a.addEventListener('keydown', e=>{ if(e.key==='Enter') submit(); });
+    el.a.addEventListener('input', ()=>{ const need = cur? transform(cur.mode, cur.seq) : ''; const user=el.a.value.trim(); if(user && need && user===need) submit(); });
+    el.pause.onclick=pause; el.abort.onclick=abort;
+    startRound();
+  }
+}
+
+/* ========= TASK SWITCH ========= */
+function viewTaskSwitch(root){
+  root.appendChild(card(`<h2>🔁 Task Switch</h2>
+  <div class="muted">Fokus-Ansicht. Buttons bleiben (hier Tippeingabe nicht sinnvoll).</div>`));
+  const cfg={seconds:180, targetNet:TARGET_TASK.net, targetAcc:TARGET_TASK.acc};
+  const panel=card(); panel.appendChild(formRow([
+    numberField('Zeit (s)',60,600,10,cfg.seconds,v=>cfg.seconds=v),
+    numberField('Ziel Net-Score',0,200,1,cfg.targetNet,v=>cfg.targetNet=v),
+    numberField('Ziel Accuracy (%)',50,100,1,cfg.targetAcc,v=>cfg.targetAcc=v),
+    btn('Start', ()=>run())
+  ])); root.appendChild(panel); root.appendChild(highCard('task'));
+
+  function genTrial(){
+    const r=(a,b)=>Math.floor(Math.random()*(b-a+1))+a;
+    const task = Math.random()<0.5 ? 'ARROWS':'PARITY';
+    if(task==='ARROWS'){
+      const patterns = ['<<<', '>>>', '<<>', '<>>', '><<', '>><', '<><', '><>'];
+      const stim = patterns[r(0,patterns.length-1)];
+      const same = (stim==='<<<'||stim==='>>>');
+      const correct = same ? 'SAME' : 'DIFF';
+      return {task, stim, correct};
+    } else {
+      const a=r(10,99), b=r(2,9), op = Math.random()<0.5?'+':'×';
+      const val = op==='+'? a+b : a*b;
+      const correct = (val%2===1) ? 'ODD':'EVEN';
+      const stim = `${a} ${op} ${b}`;
+      return {task, stim, correct};
+    }
+  }
+  function sigOf(tr){ return `${tr.task}|${tr.stim}|${tr.correct}`; }
+
+  function run(){
+    enterFocus();
+    const totalMs=cfg.seconds*1000; const ui=card(`<div class="focus-shell">
+      <div class="focus-top"><span class="pill">Zeit: <span id="t" class="timer"></span></span><span class="pill">Trials: <b id="cnt">0</b></span><span class="pill">Score: <b id="sc">0</b></span></div>
+      <div class="focus-main"><div class="question" id="stim" style="font-size:38px;letter-spacing:4px"></div></div>
+      <div class="focus-bottom center">
+        <div class="row center" style="justify-content:center">
+          <button class="btn" id="leftBtn">Linke Option</button>
+          <button class="btn secondary" id="rightBtn">Rechte Option</button>
+          <button class="btn ghost" id="pause">Pause</button>
+          <button class="btn danger" id="abort">Abbrechen</button>
+        </div>
+        <div class="muted" id="legend"></div>
+      </div>
+    </div>`);
+
+    root.appendChild(ui);
+    const el={t:ui.querySelector('#t'),cnt:ui.querySelector('#cnt'),sc:ui.querySelector('#sc'),stim:ui.querySelector('#stim'),left:ui.querySelector('#leftBtn'),right:ui.querySelector('#rightBtn'),legend:ui.querySelector('#legend'),pause:ui.querySelector('#pause'),abort:ui.querySelector('#abort')};
+    let paused=false,pauseT=0,tStart=performance.now(),tPause=0,running=true;
+    let score=0, n=0, correctN=0, per=[]; let cur=null, tTrial=now();
+
+    function tick(){ let tNow=performance.now(); if(paused) tNow=tPause; const used=tNow-tStart-pauseT; const left=Math.max(0,totalMs-used);
+      el.t.textContent=(left/1000).toFixed(1)+'s'; if(left<=0&&running){finish();return;} if(running) requestAnimationFrame(tick); }
+    function showTrial(){
+      cur = dedupFindNew('task', genTrial, sigOf);
+      el.legend.textContent = cur.task==='ARROWS' ? 'Wähle: Gleich = links · Verschieden = rechts' : 'Wähle: Ungerade = links · Gerade = rechts';
+      el.stim.textContent = cur.stim + (cur.task==='ARROWS' ? '  (ARROWS)' : '  (PARITY)'); tTrial=now();
+    }
+    function answer(which){
+      const ms=Math.round(now()-tTrial);
+      let user = (cur.task==='ARROWS') ? (which==='LEFT' ? 'SAME':'DIFF') : (which==='LEFT' ? 'ODD':'EVEN');
+      const ok = (user===cur.correct);
+      if(ok){ score+=1; correctN++; } else { score-=1; }
+      n++; el.sc.textContent=score; el.cnt.textContent=n;
+      per.push({task:cur.task, stim:cur.stim, correct:cur.correct, user, ok, ms});
+      showTrial();
+    }
+    function pause(){ if(!paused){paused=true;tPause=performance.now();el.pause.textContent='Resume';} else {paused=false;pauseT+=performance.now()-tPause;el.pause.textContent='Pause';requestAnimationFrame(tick);} }
+    function abort(){ if(confirm('Ohne Speichern beenden?')){ running=false; exitFocus(); ui.innerHTML='<div class="card">Abgebrochen – nicht gespeichert.</div>'; } }
+    function finish(){
+      running=false; exitFocus();
+      const acc = n>0 ? (correctN/n*100) : 0;
+      const avg = per.length? Math.round(per.reduce((a,x)=>a+x.ms,0)/per.length):0;
+      const stats={correct:correctN,total:n,avgMs:avg,score};
+      const r1 = cfg.targetNet>0 ? (score/cfg.targetNet) : 0;
+      const r2 = cfg.targetAcc>0 ? (acc/cfg.targetAcc) : 0;
+      const readiness = clamp(Math.round(Math.min(r1,r2)*100),0,200);
+      pushSession({module:'task', stats, perQuestion:per, settings:{...cfg}});
+      const rows=[['#','task','stimulus','correct','user','ok','ms']]; per.forEach((x,j)=>rows.push([j+1,x.task,x.stim,x.correct,x.user,x.ok?1:0,x.ms]));
+      const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+      const txt=per.map((x,j)=>`${j+1}. ${x.task} | ${x.stim} | correct=${x.correct} | user=${x.user} | ${x.ok?'OK':'X'} | ${x.ms}ms`).join('\n');
+      ui.innerHTML = `<h3>Ergebnis</h3><div class="row"><span class="pill">Score: <b>${score}</b></span><span class="pill">Accuracy: <b>${acc.toFixed(1)}%</b></span><span class="pill">Ø RT: <b>${fmtMs(avg)}</b></span><span class="pill">Ready: <b>${readiness}%</b></span></div>
+      <div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div>`;
+      ui.querySelector('#dlCsv').onclick=()=>download(`task_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,'text/csv');
+      ui.querySelector('#dlTxt').onclick=()=>download(`task_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`,txt,'text/plain');
+      render();
+    }
+
+    el.left.onclick=()=>answer('LEFT'); el.right.onclick=()=>answer('RIGHT');
+    el.pause.onclick=pause; el.abort.onclick=abort;
+    requestAnimationFrame(tick); showTrial();
+  }
+}
+
+/* ========= MARKET MAKING (Light/Card/Dice) ========= */
+function viewMM(root){
+  root.appendChild(card(`<h2>📈 Market Making</h2><div class="muted">Fokus-Ansicht; Interaktion über Buttons (keine Tipp-Antworten nötig).</div>`));
+  const cfg={mode:'light', seconds:300, base:1000, vol:0.5, tick:200, spread:1.0, invPenalty:0.02, targetRate:TARGET_MMG.pnlRate};
+  const panel=card(); panel.appendChild(formRow([
+    selectField('Modus', [['light','Light'],['card','Card'],['dice','Dice']], v=>cfg.mode=v, cfg.mode),
+    numberField('Dauer (s)',60,900,10,cfg.seconds,v=>cfg.seconds=v),
+    numberField('Startpreis',100,5000,10,cfg.base,v=>cfg.base=v,true),
+    numberField('Volatilität σ',0.1,2.0,0.05,cfg.vol,v=>cfg.vol=v,true),
+    numberField('Tick (ms)',50,1000,10,cfg.tick,v=>cfg.tick=v),
+    numberField('Spread (Punkte)',0.1,5,0.1,cfg.spread,v=>cfg.spread=v,true),
+    numberField('Inv-Penalty',0,0.1,0.005,cfg.invPenalty,v=>cfg.invPenalty=v,true),
+    numberField('Ziel PnL-Rate (pro 5min)',0,0.2,0.005,cfg.targetRate,v=>cfg.targetRate=v,true),
+    btn('Start', ()=>run())
+  ])); root.appendChild(panel); root.appendChild(highCard('mmg'));
+
+  function run(){ enterFocus(); if(cfg.mode==='light') return runLight(); if(cfg.mode==='card') return runCard(); return runDice(); }
+  function commonUI(){
+    const ui=card(`<div class="focus-shell">
+      <div class="focus-top"><span class="pill">Zeit: <span id="time" class="timer"></span></span><span class="pill">Mid: <b id="mid">${cfg.base.toFixed(2)}</b></span><span class="pill">Inv: <b id="inv">0</b></span><span class="pill">Cash: <b id="cash">0.00</b></span><span class="pill">PnL: <b id="pnl">0.00</b></span></div>
+      <div class="focus-main"><div class="card center"><div class="question">Quotes</div><div style="font-size:26px"><span id="bid">—</span> | <span id="ask">—</span></div></div></div>
+      <div class="focus-bottom">
+        <div class="row">
+          <div><label>Spread</label><input id="spread" type="number" step="0.1" value="${cfg.spread}"></div>
+          <div><label>Bias</label><input id="bias" type="number" step="0.1" value="0"></div>
+          <button class="btn" id="wider">+ Spread</button>
+          <button class="btn" id="tighter">- Spread</button>
+          <button class="btn ghost" id="flat">Flat</button>
+          <button class="btn danger" id="abort">Abbrechen</button>
+        </div>
+      </div>
+    </div>`);
+    root.appendChild(ui);
+    const el={time:ui.querySelector('#time'),mid:ui.querySelector('#mid'),inv:ui.querySelector('#inv'),cash:ui.querySelector('#cash'),pnl:ui.querySelector('#pnl'),spread:ui.querySelector('#spread'),bias:ui.querySelector('#bias'),wider:ui.querySelector('#wider'),tighter:ui.querySelector('#tighter'),flat:ui.querySelector('#flat'),abort:ui.querySelector('#abort'),bid:ui.querySelector('#bid'),ask:ui.querySelector('#ask'), ui};
+    return {ui, el};
+  }
+  function endRun(ui, cb){ exitFocus(); cb(); render(); }
+  function runLight(){
+    const {ui,el} = commonUI();
+    const totalMs=cfg.seconds*1000; let mid=cfg.base, cash=0, inv=0, t=0, running=true;
+    const per=[];
+    el.wider.onclick=()=>el.spread.value=(+el.spread.value+0.2).toFixed(1);
+    el.tighter.onclick=()=>el.spread.value=Math.max(0.1,+el.spread.value-0.2).toFixed(1);
+    el.flat.onclick=()=>{ cash += inv*mid; per.push({event:'flat', price:mid}); inv=0; };
+    el.abort.onclick=()=>{ running=false; endRun(ui, ()=> ui.innerHTML='<div class="card">Abgebrochen – nicht gespeichert.</div>'); };
+    function step(){
+      const dz=(Math.random()*2-1)*cfg.vol;
+      mid=Math.max(0.01, mid*(1+dz/1000));
+      const spr=Math.max(0.05, +el.spread.value); const bias=+el.bias.value;
+      const bid=mid - spr/2 - bias; const ask=mid + spr/2 - bias;
+      el.bid.textContent=bid.toFixed(2); el.ask.textContent=ask.toFixed(2);
+      const hitProb=Math.min(0.9, 0.25 + 0.6*(1/(1+spr)));
+      if(Math.random()<hitProb*0.5){ cash+=ask; inv-=1; per.push({event:'sell', price:ask, mid, inv}); }
+      if(Math.random()<hitProb*0.5){ cash-=bid; inv+=1; per.push({event:'buy', price:bid, mid, inv}); }
+      const pnl = cash + inv*mid - Math.abs(inv)*cfg.invPenalty;
+      el.mid.textContent=mid.toFixed(2); el.inv.textContent=inv.toFixed(0); el.cash.textContent=cash.toFixed(2); el.pnl.textContent=pnl.toFixed(2);
+    }
+    let last=performance.now();
+    function loop(){
+      const nowp=performance.now();
+      if(nowp-last>=cfg.tick && running){
+        step(); last=nowp; t+=cfg.tick;
+        const left=Math.max(0,totalMs - t); el.time.textContent=(left/1000).toFixed(1)+'s';
+        if(left<=0){ running=false; finish(); return; }
+      }
+      if(running) requestAnimationFrame(loop);
+    }
+    function finish(){
+      const pnl = parseFloat(el.pnl.textContent);
+      const stats={score:+pnl.toFixed(2), cash:+parseFloat(el.cash.textContent).toFixed(2), endMid:+parseFloat(el.mid.textContent).toFixed(2), inventory:+el.inv.textContent};
+      const target = cfg.base * cfg.targetRate * (cfg.seconds/300);
+      const readiness = clamp(Math.round((pnl/target)*100),0,200);
+      endRun(ui, ()=>{
+        const rows=[['#','event','price','mid','inventory']]; per.forEach((x,j)=>rows.push([j+1,x.event,x.price??'',x.mid??'',x.inv??'']));
+        const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+        const txt=per.map((x,j)=>`${j+1}. ${x.event} p=${x.price??''} mid=${x.mid??''} inv=${x.inv??''}`).join('\n');
+        ui.insertAdjacentHTML('beforeend', `<div class="card"><h3>Ergebnis</h3><div class="row"><span class="pill">PnL: <b class="${pnl>=0?'ok':'bad'}">${pnl.toFixed(2)}</b></span><span class="pill">Ready: <b>${readiness}%</b> (Ziel ${target.toFixed(2)})</span></div><div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div></div>`);
+        ui.querySelector('#dlCsv').onclick=()=>download(`mm_light_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,'text/csv');
+        ui.querySelector('#dlTxt').onclick=()=>download(`mm_light_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`,txt,'text/plain');
+      });
+    }
+    loop();
+  }
+  function runCard(){
+    const {ui,el} = commonUI();
+    const totalMs=cfg.seconds*1000; let mid=cfg.base, cash=0, inv=0, t=0, running=true;
+    const per=[]; const deck=[...Array(52).keys()].sort(()=>Math.random()-0.5);
+    el.wider.onclick=()=>el.spread.value=(+el.spread.value+0.2).toFixed(1);
+    el.tighter.onclick=()=>el.spread.value=Math.max(0.1,+el.spread.value-0.2).toFixed(1);
+    el.flat.onclick=()=>{ cash += inv*mid; per.push({event:'flat', price:mid}); inv=0; };
+    el.abort.onclick=()=>{ running=false; endRun(ui, ()=> ui.innerHTML='<div class="card">Abgebrochen – nicht gespeichert.</div>'); };
+    function round(){
+      const spr=Math.max(0.05, +el.spread.value); const bias=+el.bias.value;
+      const bid=mid - spr/2 - bias; const ask=mid + spr/2 - bias;
+      el.bid.textContent=bid.toFixed(2); el.ask.textContent=ask.toFixed(2);
+      const c = deck.pop(); const valShift = ((c%13)-6)*0.02;
+      const trueVal = mid*(1+valShift);
+      if(trueVal > ask && Math.random()<0.7){ cash+=ask; inv-=1; per.push({event:'sell', price:ask, trueVal, mid}); }
+      if(trueVal < bid && Math.random()<0.7){ cash-=bid; inv+=1; per.push({event:'buy', price:bid, trueVal, mid}); }
+      mid = (mid*0.9 + trueVal*0.1);
+      const pnl = cash + inv*mid - Math.abs(inv)*cfg.invPenalty;
+      el.mid.textContent=mid.toFixed(2); el.inv.textContent=inv.toFixed(0); el.cash.textContent=cash.toFixed(2); el.pnl.textContent=pnl.toFixed(2);
+    }
+    let last=performance.now();
+    function loop(){
+      const nowp=performance.now();
+      if(nowp-last>=1000 && running){
+        round(); last=nowp; t+=1000; const left=Math.max(0,totalMs-t); el.time.textContent=(left/1000).toFixed(1)+'s';
+        if(left<=0){ running=false; finish(); return; }
+      }
+      if(running) requestAnimationFrame(loop);
+    }
+    function finish(){
+      const pnl = parseFloat(el.pnl.textContent);
+      const stats={score:+pnl.toFixed(2), cash:+parseFloat(el.cash.textContent).toFixed(2), endMid:+parseFloat(el.mid.textContent).toFixed(2), inventory:+el.inv.textContent};
+      const target = cfg.base * cfg.targetRate * (cfg.seconds/300);
+      const readiness = clamp(Math.round((pnl/target)*100),0,200);
+      endRun(ui, ()=>{
+        const rows=[['#','event','price','trueVal','mid','inventory']]; per.forEach((x,j)=>rows.push([j+1,x.event,x.price??'',x.trueVal??'',x.mid??'',x.inv??'']));
+        const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+        const txt=per.map((x,j)=>`${j+1}. ${x.event} p=${x.price??''} true=${x.trueVal??''} mid=${x.mid??''} inv=${x.inv??''}`).join('\n');
+        ui.insertAdjacentHTML('beforeend', `<div class="card"><h3>Ergebnis</h3><div class="row"><span class="pill">PnL: <b class="${pnl>=0?'ok':'bad'}">${pnl.toFixed(2)}</b></span><span class="pill">Ready: <b>${readiness}%</b></span></div><div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div></div>`);
+        ui.querySelector('#dlCsv').onclick=()=>download(`mm_card_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,'text/csv');
+        ui.querySelector('#dlTxt').onclick=()=>download(`mm_card_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`,txt,'text/plain');
+      });
+    }
+    loop();
+  }
+  function runDice(){
+    const {ui,el} = commonUI();
+    const totalMs=cfg.seconds*1000; let mid=cfg.base, cash=0, inv=0, t=0, running=true; const per=[];
+    el.wider.onclick=()=>el.spread.value=(+el.spread.value+0.2).toFixed(1);
+    el.tighter.onclick=()=>el.spread.value=Math.max(0.1,+el.spread.value-0.2).toFixed(1);
+    el.flat.onclick=()=>{ cash += inv*mid; per.push({event:'flat', price:mid}); inv=0; };
+    el.abort.onclick=()=>{ running=false; endRun(ui, ()=> ui.innerHTML='<div class="card">Abgebrochen – nicht gespeichert.</div>'); };
+    function step(){
+      const die = Math.ceil(Math.random()*6);
+      const jump = (die-3.5)*0.01;
+      mid = Math.max(0.01, mid*(1+jump));
+      const spr=Math.max(0.05, +el.spread.value); const bias=+el.bias.value;
+      const bid=mid - spr/2 - bias; const ask=mid + spr/2 - bias;
+      el.bid.textContent=bid.toFixed(2); el.ask.textContent=ask.toFixed(2);
+      if(die>=5 && Math.random()<0.6){ cash+=ask; inv-=1; per.push({event:'sell', die, price:ask, mid, inv}); }
+      if(die<=2 && Math.random()<0.6){ cash-=bid; inv+=1; per.push({event:'buy', die, price:bid, mid, inv}); }
+      const pnl = cash + inv*mid - Math.abs(inv)*cfg.invPenalty;
+      el.mid.textContent=mid.toFixed(2); el.inv.textContent=inv.toFixed(0); el.cash.textContent=cash.toFixed(2); el.pnl.textContent=pnl.toFixed(2);
+    }
+    let last=performance.now();
+    function loop(){
+      const nowp=performance.now();
+      if(nowp-last>=800 && running){
+        step(); last=nowp; t+=800;
+        const left=Math.max(0,totalMs-t); el.time.textContent=(left/1000).toFixed(1)+'s';
+        if(left<=0){ running=false; finish(); return; }
+      }
+      if(running) requestAnimationFrame(loop);
+    }
+    function finish(){
+      const pnl = parseFloat(el.pnl.textContent);
+      const stats={score:+pnl.toFixed(2), cash:+parseFloat(el.cash.textContent).toFixed(2), endMid:+parseFloat(el.mid.textContent).toFixed(2), inventory:+el.inv.textContent};
+      const target = cfg.base * cfg.targetRate * (cfg.seconds/300);
+      const readiness = clamp(Math.round((pnl/target)*100),0,200);
+      endRun(ui, ()=>{
+        const rows=[['#','event','die','price','mid','inventory']]; per.forEach((x,j)=>rows.push([j+1,x.event,x.die??'',x.price??'',x.mid??'',x.inv??'']));
+        const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+        const txt=per.map((x,j)=>`${j+1}. d=${x.die??''} ${x.event} p=${x.price??''} mid=${x.mid??''} inv=${x.inv??''}`).join('\n');
+        ui.insertAdjacentHTML('beforeend', `<div class="card"><h3>Ergebnis</h3><div class="row"><span class="pill">PnL: <b class="${pnl>=0?'ok':'bad'}">${pnl.toFixed(2)}</b></span><span class="pill">Ready: <b>${readiness}%</b></span></div><div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div></div>`);
+        ui.querySelector('#dlCsv').onclick=()=>download(`mm_dice_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,'text/csv');
+        ui.querySelector('#dlTxt').onclick=()=>download(`mm_dice_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`,txt,'text/plain');
+      });
+    }
+    loop();
+  }
+}
+
+/* ========= BRAINTEASERS & FERMI ========= */
+function viewBrainFermi(root){
+  root.appendChild(card('<h2>🧩 Brainteasers & Fermi</h2><div class="muted">Keine Wiederholungen. Ziele: Brainteasers ≥ '+TARGET_BRAIN.acc+'% korrekt & Median ≤ '+TARGET_BRAIN.medSec+'s. Fermi: innerhalb ×'+TARGET_FERMI.withinFactor+' in ≥ '+TARGET_FERMI.rate+'%; Make-a-Market-Hit ≥ '+TARGET_FERMI.mm_hit+'%.</div>'));
+  const cfg={mode:'brainteasers', n:6, secondsPer:120, targetAcc:TARGET_BRAIN.acc, targetMed:TARGET_BRAIN.medSec, targetFermiRate:TARGET_FERMI.rate, targetMM:TARGET_FERMI.mm_hit};
+  const panel=card(); panel.appendChild(formRow([
+    selectField('Modus', [['brainteasers','Brainteasers'],['fermi','Fermi'],['market','Make a Market']], v=>cfg.mode=v, cfg.mode),
+    numberField('Anzahl',1,30,1,cfg.n,v=>cfg.n=v),
+    numberField('Zeit/Frage (s)',30,600,5,cfg.secondsPer,v=>cfg.secondsPer=v),
+    btn('Start', ()=>run())
+  ])); root.appendChild(panel); root.appendChild(highCard('brain'));
+
+  const BT_BANK=[
+    {id:'bt1', q:'Zwei Seile brennen je 60 Min ungleichmäßig. Miss 45 Min.', a:'Seil A an beiden Enden + Seil B an einem Ende; nach 30 Min A aus → anderes Ende B an → 15 Min.'},
+    {id:'bt2', q:'Drei Schalter, eine Lampe (einmal betreten). Wie zuordnen?', a:'1 an, warten, aus; 2 an; rein: an=2, aus+warm=1, aus+kalt=3.'},
+    {id:'bt3', q:'Wie viele 3-stellige Zahlen mit streng steigenden Ziffern?', a:'C(9,3)=84 (Ziffern 1–9).'},
+    {id:'bt4', q:'12 Kugeln, eine anders (schwer/leicht). 3 Wägungen.', a:'Klassischer 12-Kugel-Plan (Aufteilung 3-3-3-3).'},
+    {id:'bt5', q:'Durchschnitt 120 km/h hin+zurück? Hinfahrt 60 km/h 1h.', a:'Unmöglich – Gesamtzeit bereits > 2h.'}
+  ];
+
+  function run(){ if(cfg.mode==='brainteasers') return runBT(); if(cfg.mode==='fermi') return runFermi(); return runMarket(); }
+
+  function runBT(){
+    enterFocus();
+    const ui=card(`<div class="focus-shell">
+      <div class="focus-top"><span class="pill">Frage <b id="qc">1</b> / ${cfg.n}</span><span class="pill">Timer: <span id="t" class="timer"></span></span></div>
+      <div class="focus-main"><div class="question" id="q"></div></div>
+      <div class="focus-bottom">
+        <div class="row"><input class="big" id="a" placeholder="Kurz antw. & Enter" style="flex:1"><button class="btn" id="ok">Weiter</button><button class="btn ghost" id="abort">Abbrechen</button></div>
+        <div class="muted" id="sol"></div>
+      </div>
+    </div>`);
+    root.appendChild(ui);
+    const el={qc:ui.querySelector('#qc'),t:ui.querySelector('#t'),q:ui.querySelector('#q'),a:ui.querySelector('#a'),ok:ui.querySelector('#ok'),abort:ui.querySelector('#abort'),sol:ui.querySelector('#sol')};
+
+    function pickQ(){
+      const pool = BT_BANK.filter(x=>!dedupHas('brain', x.id));
+      const item = (pool.length>0)? pool[Math.floor(Math.random()*pool.length)] : BT_BANK[Math.floor(Math.random()*BT_BANK.length)];
+      dedupAdd('brain', item.id); return item;
+    }
+    let cur=null; let end=0, running=true; let idx=0; let t0=0; let per=[];
+    function next(){ if(idx>=cfg.n){ return finish(); }
+      cur = pickQ(); el.q.textContent = cur.q; el.a.value=''; el.a.focus(); el.qc.textContent=String(idx+1); t0=now(); end=performance.now()+cfg.secondsPer*1000; el.sol.textContent='';
+      requestAnimationFrame(tick);
+    }
+    function tick(){ const left=Math.max(0,end-performance.now()); el.t.textContent=(left/1000).toFixed(1)+'s'; if(left>0&&running) requestAnimationFrame(tick); }
+    function submit(){ const ms=Math.round(now()-t0); const user=el.a.value.trim(); const ok = user.length>0; per.push({q:cur.q, a:cur.a, your:user, ok, ms}); idx++; next(); }
+    function abort(){ if(confirm('Ohne Speichern beenden?')){ running=false; exitFocus(); ui.innerHTML='<div class="card">Abgebrochen – nicht gespeichert.</div>'; } }
+    function finish(){ running=false; exitFocus(); const correct=per.filter(x=>x.ok).length; const med=per.map(x=>x.ms).sort((a,b)=>a-b)[Math.floor(per.length/2)]||0; const ready = Math.min(correct/(cfg.n*TARGET_BRAIN.acc/100), (TARGET_BRAIN.medSec*1000)/(med||Infinity))*100; const readiness=clamp(Math.round(ready),0,200); const avg=per.length?Math.round(per.reduce((a,x)=>a+x.ms,0)/per.length):0;
+      pushSession({module:'brain', mode:'bt', stats:{correct,total:cfg.n,avgMs:avg,score:correct}, perQuestion:per, settings:{...cfg}});
+      const rows=[['#','question','your','solution','ok','ms']]; per.forEach((x,j)=>rows.push([j+1,x.q,x.your,x.a,x.ok?1:0,x.ms]));
+      const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+      const txt=per.map((x,j)=>`${j+1}. ${x.q} | your=${x.your} | sol=${x.a} | ${x.ok?'OK':'—'} | ${x.ms}ms`).join('\n');
+      ui.innerHTML=`<h3>Ergebnis</h3><div class="row"><span class="pill">Korrekt: <b class="ok">${correct}</b> / ${cfg.n}</span><span class="pill">Median: <b>${fmtMs(med)}</b></span><span class="pill">Ready: <b>${readiness.toFixed(0)}%</b></span></div><div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div>`;
+      ui.querySelector('#dlCsv').onclick=()=>download(`brain_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,'text/csv');
+      ui.querySelector('#dlTxt').onclick=()=>download(`brain_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`,txt,'text/plain');
+      render();
+    }
+    el.ok.onclick=submit; el.a.addEventListener('keydown', e=>{ if(e.key==='Enter') submit(); }); el.abort.onclick=abort;
+    next();
+  }
+
+  function runFermi(){
+    enterFocus();
+    const ui=card(`<div class="focus-shell">
+      <div class="focus-top"><span class="pill">Frage <b id="qc">1</b> / ${cfg.n}</span><span class="pill">Timer: <span id="t" class="timer"></span></span></div>
+      <div class="focus-main"><div class="question" id="q"></div></div>
+      <div class="focus-bottom">
+        <div class="row"><input class="big" id="a" inputmode="decimal" placeholder="Schätzung (Zahl)"><button class="btn" id="ok">Weiter</button><button class="btn ghost" id="abort">Abbrechen</button></div>
+      </div>
+    </div>`);
+    root.appendChild(ui);
+    const el={qc:ui.querySelector('#qc'),t:ui.querySelector('#t'),q:ui.querySelector('#q'),a:ui.querySelector('#a'),ok:ui.querySelector('#ok'),abort:ui.querySelector('#abort')};
+
+    function genFermi(){
+      const topics=[
+        {id:'cars_city', text:'Autos in einer mittelgroßen Stadt', base:2e5, spread:4},
+        {id:'sand_beach', text:'Körner auf einer Handvoll Sand', base:5e4, spread:10},
+        {id:'cells_body', text:'Zellen im menschlichen Körper (≈ 3.7e13)', base:3.7e13, spread:3},
+        {id:'steps_year', text:'Schritte pro Jahr einer Person', base:2e6, spread:5},
+        {id:'coffee_cups', text:'Getrunkene Kaffeetassen weltweit pro Tag', base:2e9, spread:5}
+      ];
+      const t=topics[Math.floor(Math.random()*topics.length)];
+      const trueVal = t.base * Math.pow(2,(Math.random()-0.5)*t.spread);
+      return {id:t.id, q:'Schätze: '+t.text, trueVal: Math.round(trueVal)};
+    }
+    function sigOf(x){ return 'fermi|'+x.id; }
+
+    let cur=null, end=0, running=true; let idx=0; let t0=0; let per=[];
+    function next(){ if(idx>=cfg.n){finish();return;} cur=dedupFindNew('fermi', genFermi, sigOf); el.q.textContent=cur.q; el.a.value=''; el.a.focus(); el.qc.textContent=String(idx+1); t0=now(); end=performance.now()+cfg.secondsPer*1000; requestAnimationFrame(tick); }
+    function tick(){ const left=Math.max(0,end-performance.now()); el.t.textContent=(left/1000).toFixed(1)+'s'; if(left>0&&running) requestAnimationFrame(tick); }
+    function submit(){ const ms=Math.round(now()-t0); const user=Number(el.a.value.replace(',','.')); const ratio = user>0 ? Math.max(user,cur.trueVal)/Math.max(1,Math.min(user,cur.trueVal)) : Infinity; const ok = ratio <= TARGET_FERMI.withinFactor; per.push({q:cur.q, true:cur.trueVal, user, ok, factor:ratio.toFixed(2), ms}); idx++; next(); }
+    function abort(){ if(confirm('Ohne Speichern beenden?')){ running=false; exitFocus(); ui.innerHTML='<div class="card">Abgebrochen – nicht gespeichert.</div>'; } }
+    function finish(){ running=false; exitFocus(); const correct=per.filter(x=>x.ok).length; const avg=per.length?Math.round(per.reduce((a,x)=>a+x.ms,0)/per.length):0; const rate = per.length? correct/per.length*100 : 0; const readiness = clamp(Math.round((rate/cfg.targetFermiRate)*100),0,200); pushSession({module:'brain', mode:'fermi', stats:{correct,total:cfg.n,avgMs:avg,score:correct}, perQuestion:per, settings:{...cfg}}); const rows=[['#','question','true','your','ok','factor','ms']]; per.forEach((x,j)=>rows.push([j+1,x.q,x.true,x.user,x.ok?1:0,x.factor,x.ms])); const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n'); const txt=per.map((x,j)=>`${j+1}. ${x.q} | true=${x.true} | your=${x.user} | factor=${x.factor} | ${x.ok?'OK':'X'} | ${x.ms}ms`).join('\n'); ui.innerHTML=`<h3>Ergebnis</h3><div class="row"><span class="pill">Korrekt: <b class="ok">${correct}</b> / ${cfg.n}</span><span class="pill">Ready: <b>${readiness}%</b></span></div><div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div>`; ui.querySelector('#dlCsv').onclick=()=>download(`fermi_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,'text/csv'); ui.querySelector('#dlTxt').onclick=()=>download(`fermi_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`,txt,'text/plain'); render(); }
+    el.ok.onclick=submit; el.a.addEventListener('keydown', e=>{ if(e.key==='Enter') submit(); }); el.abort.onclick=abort;
+    next();
+  }
+
+  function runMarket(){
+    enterFocus();
+    const ui=card(`<div class="focus-shell">
+      <div class="focus-top"><span class="pill">Frage <b id="qc">1</b> / ${cfg.n}</span><span class="pill">Timer: <span id="t" class="timer"></span></span></div>
+      <div class="focus-main"><div class="question" id="q"></div></div>
+      <div class="focus-bottom">
+        <div class="row">
+          <div style="flex:1">
+            <label>Gib Mid und Spread</label>
+            <input class="big" id="mid" inputmode="decimal" placeholder="Mid">
+            <input class="big" id="spr" inputmode="decimal" placeholder="Spread">
+          </div>
+          <button class="btn" id="ok">Quote</button>
+          <button class="btn ghost" id="abort">Abbrechen</button>
+        </div>
+      </div>
+    </div>`);
+    root.appendChild(ui);
+    const el={qc:ui.querySelector('#qc'),t:ui.querySelector('#t'),q:ui.querySelector('#q'),mid:ui.querySelector('#mid'),spr:ui.querySelector('#spr'),ok:ui.querySelector('#ok'),abort:ui.querySelector('#abort')};
+
+    function gen(){ const v=Math.round(100*Math.pow(1.01, (Math.random()-0.5)*200)); return {v, id:'mmq_'+Math.random().toString(36).slice(2)}; }
+    function sigOf(x){ return x.id; }
+
+    let cur=null, end=0, running=true; let idx=0; let t0=0; let per=[];
+    function next(){ if(idx>=cfg.n){finish();return;} cur=dedupFindNew('marketQ', gen, sigOf); el.q.textContent='Setze einen Markt um den wahren Wert (versteckt).'; el.mid.value=''; el.spr.value=''; el.mid.focus(); el.qc.textContent=String(idx+1); t0=now(); end=performance.now()+cfg.secondsPer*1000; requestAnimationFrame(tick); }
+    function tick(){ const left=Math.max(0,end-performance.now()); el.t.textContent=(left/1000).toFixed(1)+'s'; if(left>0&&running) requestAnimationFrame(tick); }
+    function submit(){ const ms=Math.round(now()-t0); const mid=Number(el.mid.value.replace(',','.')); const spr=Math.abs(Number(el.spr.value.replace(',','.'))); const lo=mid - spr/2, hi=mid + spr/2; const hit = (cur.v>=lo && cur.v<=hi); per.push({true:cur.v, mid, spr, hit, ms}); idx++; next(); }
+    function abort(){ if(confirm('Ohne Speichern beenden?')){ running=false; exitFocus(); ui.innerHTML='<div class="card">Abgebrochen – nicht gespeichert.</div>'; } }
+    function finish(){ running=false; exitFocus(); const hits=per.filter(x=>x.hit).length; const rate=per.length? hits/per.length*100 : 0; const readiness = clamp(Math.round((rate/cfg.targetMM)*100),0,200); const avg=per.length?Math.round(per.reduce((a,x)=>a+x.ms,0)/per.length):0; pushSession({module:'brain', mode:'market', stats:{correct:hits,total:per.length,avgMs:avg,score:hits}, perQuestion:per, settings:{...cfg}}); const rows=[['#','true','mid','spr','hit','ms']]; per.forEach((x,j)=>rows.push([j+1,x.true,x.mid,x.spr,x.hit?1:0,x.ms])); const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n'); const txt=per.map((x,j)=>`${j+1}. true=${x.true} | mid=${x.mid} | spr=${x.spr} | ${x.hit?'HIT':'MISS'} | ${x.ms}ms`).join('\n'); ui.innerHTML=`<h3>Ergebnis</h3><div class="row"><span class="pill">Treffer: <b class="ok">${hits}</b> / ${per.length}</span><span class="pill">Ready: <b>${readiness}%</b></span></div><div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div>`; ui.querySelector('#dlCsv').onclick=()=>download(`marketQ_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,'text/csv'); ui.querySelector('#dlTxt').onclick=()=>download(`marketQ_${new Date().toISOString().replace(/[:.]/g,'-')}.txt`,txt,'text/plain'); render(); }
+    el.ok.onclick=submit; el.mid.addEventListener('keydown', e=>{ if(e.key==='Enter') el.spr.focus(); }); el.spr.addEventListener('keydown', e=>{ if(e.key==='Enter') submit(); }); el.abort.onclick=abort;
+    next();
+  }
+}
+
+/* ========= Stats & Settings ========= */
+function viewStats(root){
+  root.appendChild(card('<h2>📊 Statistik</h2><div class="muted">Alle Sessions, Ø-Zeiten, Accuracy & Highscores. Dedup speichert Signaturen, damit Aufgaben nicht wiederholt werden.</div>'));
+  const by={}; DB.sessions.forEach(s=>{ (by[s.module] ||= []).push(s); });
+  for(const [mod, arr] of Object.entries(by)){
+    const avg = Math.round(arr.reduce((a,x)=>a+(x.stats?.avgMs||0),0)/(arr.length||1));
+    const acc = (arr.reduce((a,x)=>a+(x.stats?.correct||0),0)) / (arr.reduce((a,x)=>a+(x.stats?.total||0),0)) * 100;
+    const el = card(`<h3>${title(mod)}</h3><div class="row"><span class="pill">Sessions: <b>${arr.length}</b></span><span class="pill">Ø Zeit/Frage: <b>${isFinite(avg)?fmtMs(avg):'—'}</b></span><span class="pill">Ø Accuracy: <b>${isFinite(acc)?acc.toFixed(1):'—'}%</b></span><span class="pill">Highscore: <b>${DB.highscores[mod]?.score ?? '—'}</b></span></div>`);
+    const rows = arr.slice(-50).map((s,i)=>[i+1, new Date(s.date).toLocaleString(), s.stats.correct+'/'+s.stats.total, (s.stats.avgMs/1000).toFixed(2)+'s', s.stats.score ?? '—']);
+    el.insertAdjacentHTML('beforeend', table(rows, ['#','Datum','Richtig','Ø Zeit','Score']));
+    root.appendChild(el);
+  }
+}
+function viewSettings(root){
+  root.appendChild(card('<h2>⚙️ Einstellungen</h2><div class="muted">Dedup-Größe & Reset einzelner Pools.</div>'));
+  const panel=card(); const mods=modules.map(m=>m.id).concat(['fermi','marketQ']);
+  panel.appendChild(formRow([
+    numberField('Dedup Kapazität (global, fest)',1000,200000,1000,50000, v=>{}),
+    ...mods.map(id=>btn(`Reset '${id}'-Pool`, ()=>{ delete DEDUP[id]; saveDedup(); alert('Pool '+id+' geleert.'); }))
+  ]));
+  root.appendChild(panel);
+}
+</script>
+</body>
+</html>
