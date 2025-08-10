@@ -66,7 +66,7 @@ function saveDedup(){ localStorage.setItem(DEDUPKEY, JSON.stringify(DEDUP)); }
 function pushSession(entry){
   DB.sessions.push({...entry, date:new Date().toISOString()});
   const k = entry.module;
-  const score = entry.stats?.score ?? entry.stats?.correct ?? 0;
+  const score = (entry && entry.stats && entry.stats.score!=null) ? entry.stats.score : ((entry && entry.stats && entry.stats.correct!=null) ? entry.stats.correct : 0);
   if(!(k in DB.highscores) || score>DB.highscores[k].score){
     DB.highscores[k] = {score, when:new Date().toISOString(), detail:entry.stats};
   }
@@ -118,7 +118,7 @@ $("#exportJson").onclick=()=>download(`qprep_stats_${new Date().toISOString().sl
 $("#exportCsv").onclick=()=>{
   const rows=[["module","date","score","correct","total","avgMs","detail_json","settings_json"]];
   for(const s of DB.sessions){
-    rows.push([s.module, s.date, s.stats?.score??"", s.stats?.correct??"", s.stats?.total??"", s.stats?.avgMs??"", JSON.stringify(s.perQuestion||[]), JSON.stringify(s.settings||{})]);
+    rows.push([s.module, s.date, get(s,"stats.score",""), get(s,"stats.correct",""), get(s,"stats.total",""), get(s,"stats.avgMs",""), JSON.stringify(s.perQuestion||[]), JSON.stringify(s.settings||{})]);
   }
   const csv = rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(",")).join("
 ");
@@ -147,7 +147,7 @@ function checkboxField(label, checked, onChange){
 }
 function table(rows, headers){
   return `<table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
-  <tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${(c??"").toString().replace(/[<>&]/g, s=>({"<":"&lt;","&":"&amp;",">":"&gt;"}[s]))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  <tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${((c==null?"":c)).toString().replace(/[<>&]/g, s=>({"<":"&lt;","&":"&amp;",">":"&gt;"}[s]))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 function title(id){ return {mental:"Mental Math", seq:"Sequences", task:"Task Switch", pin:"Pincode", mmg:"Market Making", brain:"Brainteasers & Fermi", stats:"Statistik"}[id] || id; }
 function highCard(moduleId){ const best=DB.highscores[moduleId]; const el=card(`<h3>🏆 Highscore</h3>`); el.insertAdjacentHTML("beforeend", best? `<div class="pill">Score: <b>${best.score}</b> · ${new Date(best.when).toLocaleString()}</div>` : `<div class="muted">Noch kein Highscore.</div>`); return el; }
@@ -198,7 +198,7 @@ function viewMental(root){
     const ui=card(); root.appendChild(ui);
     ui.innerHTML = `
       <div class="row" style="justify-content:space-between;align-items:center">
-        <span class="pill">Preset: ${PRESETS_MENTAL[cfg.preset]?.label || "custom"}</span>
+        <span class="pill">Preset: ${(PRESETS_MENTAL[cfg.preset]&&PRESETS_MENTAL[cfg.preset].label)||"custom"}</span>
         <span class="pill">Zeit: <span id="t" class="timer"></span></span>
         <span class="pill">Frage: <b id="qc">1</b> / ${cfg.n}</span>
       </div>
@@ -264,7 +264,7 @@ function viewMental(root){
 
     el.ok.onclick=()=>submit("ok"); el.skip.onclick=()=>submit("skip"); el.pause.onclick=pause; el.abort.onclick=abort;
     el.a.addEventListener("keydown", e=>{ if(e.key==="Enter") submit("ok"); });
-    el.a.addEventListener("input", ()=>{ if(!cfg.auto) return; const raw=el.a.value.trim(); if(!raw) return; const v=Number(raw.replace(",", ".")); if(Math.abs(v - (cur?.ans??NaN))<1e-9) submit("ok"); });
+    el.a.addEventListener("input", ()=>{ if(!cfg.auto) return; const raw=el.a.value.trim(); if(!raw) return; const v=Number(raw.replace(",", ".")); if(Math.abs(v - ((cur && typeof cur.ans!== "undefined" ? cur.ans : NaN)))<1e-9) submit("ok"); });
     requestAnimationFrame(tick); next();
   }
 }
@@ -584,10 +584,10 @@ function viewMM(root){
       const target = cfg.base * cfg.targetRate * (cfg.seconds/300); // skaliert auf 5 Min
       const readiness = clamp(Math.round((pnl/target)*100),0,200);
       pushSession({module:"mmg", mode:"light", stats, perQuestion:per, settings:{...cfg}});
-      const rows=[["#","event","price","mid","inventory"]]; per.forEach((x,j)=>rows.push([j+1,x.event,x.price??"",x.mid??"",x.inv??""]));
+      const rows=[["#","event","price","mid","inventory"]]; per.forEach((x,j)=>rows.push([j+1,x.event,(x.price!=null?x.price:""),(x.mid!=null?x.mid:""),(x.inv!=null?x.inv:"")]));
       const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("
 ");
-      const txt=per.map((x,j)=>`${j+1}. ${x.event} p=${x.price??""} mid=${x.mid??""} inv=${x.inv??""}`).join("
+      const txt=per.map((x,j)=>`${j+1}. ${x.event} p=${(x.price!=null?x.price:"")} mid=${(x.mid!=null?x.mid:"")} inv=${(x.inv!=null?x.inv:"")}`).join("
 ");
       ui.insertAdjacentHTML("beforeend", `<div class="card"><h3>Ergebnis</h3><div class="row"><span class="pill">PnL: <b class="${pnl>=0?'ok':'bad'}">${pnl.toFixed(2)}</b></span><span class="pill">Ready: <b>${readiness}%</b> (Ziel ${target.toFixed(2)})</span></div><div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div></div>`);
       $("#dlCsv",ui).onclick=()=>download(`mm_light_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,"text/csv");
@@ -632,10 +632,10 @@ function viewMM(root){
       const target = cfg.base * cfg.targetRate * (cfg.seconds/300);
       const readiness = clamp(Math.round((pnl/target)*100),0,200);
       pushSession({module:"mmg", mode:"card", stats, perQuestion:per, settings:{...cfg}});
-      const rows=[["#","event","price","trueVal","mid","inventory"]]; per.forEach((x,j)=>rows.push([j+1,x.event,x.price??"",x.trueVal??"",x.mid??"",x.inv??""]));
+      const rows=[["#","event","price","trueVal","mid","inventory"]]; per.forEach((x,j)=>rows.push([j+1,x.event,(x.price!=null?x.price:""),(x.trueVal!=null?x.trueVal:""),(x.mid!=null?x.mid:""),(x.inv!=null?x.inv:"")]));
       const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("
 ");
-      const txt=per.map((x,j)=>`${j+1}. ${x.event} p=${x.price??""} true=${x.trueVal??""} mid=${x.mid??""} inv=${x.inv??""}`).join("
+      const txt=per.map((x,j)=>`${j+1}. ${x.event} p=${(x.price!=null?x.price:"")} true=${(x.trueVal!=null?x.trueVal:"")} mid=${(x.mid!=null?x.mid:"")} inv=${(x.inv!=null?x.inv:"")}`).join("
 ");
       ui.insertAdjacentHTML("beforeend", `<div class="card"><h3>Ergebnis</h3><div class="row"><span class="pill">PnL: <b class="${pnl>=0?'ok':'bad'}">${pnl.toFixed(2)}</b></span><span class="pill">Ready: <b>${readiness}%</b></span></div><div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div></div>`);
       $("#dlCsv",ui).onclick=()=>download(`mm_card_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,"text/csv");
@@ -680,10 +680,10 @@ function viewMM(root){
       const target = cfg.base * cfg.targetRate * (cfg.seconds/300);
       const readiness = clamp(Math.round((pnl/target)*100),0,200);
       pushSession({module:"mmg", mode:"dice", stats, perQuestion:per, settings:{...cfg}});
-      const rows=[["#","event","die","price","mid","inventory"]]; per.forEach((x,j)=>rows.push([j+1,x.event,x.die??"",x.price??"",x.mid??"",x.inv??""]));
+      const rows=[["#","event","die","price","mid","inventory"]]; per.forEach((x,j)=>rows.push([j+1,x.event,(x.die!=null?x.die:""),(x.price!=null?x.price:""),(x.mid!=null?x.mid:""),(x.inv!=null?x.inv:"")]));
       const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("
 ");
-      const txt=per.map((x,j)=>`${j+1}. d=${x.die??""} ${x.event} p=${x.price??""} mid=${x.mid??""} inv=${x.inv??""}`).join("
+      const txt=per.map((x,j)=>`${j+1}. d=${(x.die!=null?x.die:"")} ${x.event} p=${(x.price!=null?x.price:"")} mid=${(x.mid!=null?x.mid:"")} inv=${(x.inv!=null?x.inv:"")}`).join("
 ");
       ui.insertAdjacentHTML("beforeend", `<div class="card"><h3>Ergebnis</h3><div class="row"><span class="pill">PnL: <b class="${pnl>=0?'ok':'bad'}">${pnl.toFixed(2)}</b></span><span class="pill">Ready: <b>${readiness}%</b></span></div><div class="row"><button class="btn" id="dlCsv">Download CSV</button><button class="btn ghost" id="dlTxt">Download TXT</button></div></div>`);
       $("#dlCsv",ui).onclick=()=>download(`mm_dice_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`,csv,"text/csv");
@@ -809,10 +809,10 @@ function viewStats(root){
   root.appendChild(card(`<h2>📊 Statistik</h2><div class="muted">Alle Sessions, Ø-Zeiten, Accuracy & Highscores. Dedup speichert Signaturen, damit Aufgaben nicht wiederholt werden.</div>`));
   const by={}; DB.sessions.forEach(s=>{ (by[s.module] ||= []).push(s); });
   for(const [mod, arr] of Object.entries(by)){
-    const avg = Math.round(arr.reduce((a,x)=>a+(x.stats?.avgMs||0),0)/(arr.length||1));
-    const acc = (arr.reduce((a,x)=>a+(x.stats?.correct||0),0)) / (arr.reduce((a,x)=>a+(x.stats?.total||0),0)) * 100;
-    const el = card(`<h3>${title(mod)}</h3><div class="row"><span class="pill">Sessions: <b>${arr.length}</b></span><span class="pill">Ø Zeit/Frage: <b>${isFinite(avg)?fmtMs(avg):"—"}</b></span><span class="pill">Ø Accuracy: <b>${isFinite(acc)?acc.toFixed(1):"—"}%</b></span><span class="pill">Highscore: <b>${DB.highscores[mod]?.score ?? "—"}</b></span></div>`);
-    const rows = arr.slice(-50).map((s,i)=>[i+1, new Date(s.date).toLocaleString(), s.stats.correct+"/"+s.stats.total, (s.stats.avgMs/1000).toFixed(2)+"s", s.stats.score ?? "—"]);
+    const avg = Math.round(arr.reduce((a,x)=>a+((x.stats&&x.stats.avgMs)||0),0)/(arr.length||1));
+    const acc = (arr.reduce((a,x)=>a+((x.stats&&x.stats.correct)||0),0)) / (arr.reduce((a,x)=>a+((x.stats&&x.stats.total)||0),0)) * 100;
+    const el = card(`<h3>${title(mod)}</h3><div class="row"><span class="pill">Sessions: <b>${arr.length}</b></span><span class="pill">Ø Zeit/Frage: <b>${isFinite(avg)?fmtMs(avg):"—"}</b></span><span class="pill">Ø Accuracy: <b>${isFinite(acc)?acc.toFixed(1):"—"}%</b></span><span class="pill">Highscore: <b>${((DB.highscores[mod]&&DB.highscores[mod].score!=null)?DB.highscores[mod].score:"—")}</b></span></div>`);
+    const rows = arr.slice(-50).map((s,i)=>[i+1, new Date(s.date).toLocaleString(), s.stats.correct+"/"+s.stats.total, (s.stats.avgMs/1000).toFixed(2)+"s", (s.stats && s.stats.score!=null ? s.stats.score : "—")]);
     el.insertAdjacentHTML("beforeend", table(rows, ["#","Datum","Richtig","Ø Zeit","Score"]));
     root.appendChild(el);
   }
@@ -830,3 +830,11 @@ function viewSettings(root){
 </main>
 </body>
 </html>
+
+function get(obj, path, def){
+  try{
+    var v=obj; var ks=path.split('.');
+    for(var i=0;i<ks.length;i++){ if(v==null) return def; v=v[ks[i]]; }
+    return (v==null?def:v);
+  }catch(e){ return def; }
+}
