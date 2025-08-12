@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Quant Prep Trainer v3 — Sequences Upgrade</title>
+  <style>
+    :root{--bg:#0f1220;--panel:#151936;--accent:#7bd88f;--accent2:#8bd3ff;--text:#eef1ff;--muted:#a8b0d3;--danger:#ff6b6b;--warn:#ffd166}
+    *{box-sizing:border-box}html,body{height:100%}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--text);
+         background:radial-gradient(1000px 600px at 10% -10%, #1a1f45 0%, #0f1220 60%)}
+    header{position:sticky;top:0;z-index:5;backdrop-filter:blur(8px);background:rgb(15 18 32 / 72%);
+           border-bottom:1px solid #232955;padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    header h1{margin:0;font-size:18px;letter-spacing:.3px}
+    nav{display:flex;gap:8px;flex-wrap:wrap}
+    nav button{background:var(--panel);color:var(--text);border:1px solid #232955;padding:8px 12px;border-radius:10px;cursor:pointer}
+    nav button.active{border-color:var(--accent);box-shadow:0 0 0 2px rgb(123 216 143 / .25) inset}
+    main{padding:16px;max-width:1100px;margin:0 auto}
+    .card{background:linear-gradient(180deg,#161a3a 0%,#10142c 100%);border:1px solid #232955;border-radius:14px;padding:16px;margin:10px 0;box-shadow:0 8px 24px rgb(0 0 0 / .25)}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+    .grid{display:grid;gap:12px}.grid.cols-2{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+    input,select{width:100%;background:#0c1030;color:var(--text);border:1px solid #232955;padding:10px 12px;border-radius:10px;outline:none}
+    .btn{background:var(--accent);color:#0a1320;border:0;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600}
+    .btn.secondary{background:var(--accent2)}.btn.ghost{background:transparent;color:var(--text);border:1px solid #2a316a}.btn.danger{background:var(--danger);color:white}
+    .muted{color:var(--muted)} .center{text-align:center}
+    .pill{padding:6px 10px;border:1px solid #2a316a;border-radius:999px;color:var(--muted)}
+    .timer{font-variant-numeric:tabular-nums}
+    .timer.green{color:var(--accent)} .timer.yellow{color:var(--warn)} .timer.red{color:var(--danger)}
+    .question{font-size:26px;margin:8px 0 12px}
+    table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+    th,td{padding:8px 10px;border-bottom:1px solid #232955}
+    tr:hover td{background:#101536}
+    .ok{color:var(--accent)}.bad{color:var(--danger)}.warn{color:var(--warn)}
+    .bar{height:10px;background:linear-gradient(90deg,var(--accent),#55c2ff);border-radius:6px}
+    .linklike{color:var(--accent2);cursor:pointer;text-decoration:underline}
+    kbd{background:#0c1030;border:1px solid #232955;border-radius:6px;padding:2px 6px}
+  </style>
+</head>
+<body>
+<header>
+  <h1>🧮 Quant Prep Trainer v3</h1>
+  <nav id="tabs"></nav>
+  <div style="margin-left:auto"></div>
+  <button class="btn ghost" id="exportJson">Export JSON</button>
+  <button class="btn ghost" id="exportCsv">Export CSV</button>
+  <button class="btn ghost" id="reset">Reset</button>
+</header>
+<main id="app"></main>
+
+<script>
+/* ========= Core Utils ========= */
+const $=(s,e=document)=>e.querySelector(s);
+const $$=(s,e=document)=>[...e.querySelectorAll(s)];
+const now=()=>performance.now();
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const fmtMs=ms=>(ms/1000).toFixed(2)+"s";
+function download(name, data, type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type}));a.download=name;a.click();URL.revokeObjectURL(a.href);}
+
+/* ========= Database & Dedup ========= */
+const DBKEY="qprep_v3"; const DEDUPKEY="qprep_dedup_v1";
+let DB = load(DBKEY, {sessions:[], highscores:{}});
+let DEDUP = load(DEDUPKEY, {});
+function load(key, def){try{ return JSON.parse(localStorage.getItem(key)) || structuredClone(def);}catch(e){ return structuredClone(def);}}
+function saveDB(){ localStorage.setItem(DBKEY, JSON.stringify(DB)); }
+function saveDedup(){ localStorage.setItem(DEDUPKEY, JSON.stringify(DEDUP)); }
+function pushSession(entry){
+  DB.sessions.push({...entry, date:new Date().toISOString()});
+  const k = entry.module;
+  const score = entry.stats?.score ?? entry.stats?.correct ?? 0;
+  if(!(k in DB.highscores) || score>DB.highscores[k].score){
+    DB.highscores[k] = {score, when:new Date().toISOString(), detail:entry.stats};
+  }
+  saveDB();
+}
+function dedupInit(mod){ if(!DEDUP[mod]) DEDUP[mod] = {list:[], set:{}}; }
+function dedupHas(mod, sig){ dedupInit(mod); return !!DEDUP[mod].set[sig]; }
+function dedupAdd(mod, sig, cap=200000){
+  dedupInit(mod);
+  if(!DEDUP[mod].set[sig]){
+    DEDUP[mod].set[sig]=1; DEDUP[mod].list.push(sig);
+    if(DEDUP[mod].list.length>cap){ const old=DEDUP[mod].list.shift(); delete DEDUP[mod].set[old]; }
+    saveDedup();
+  }
+}
+function dedupFindNew(mod, genFn, sigFn, maxTries=200){
+  for(let t=0;t<maxTries;t++){
+    const item = genFn(); const sig = sigFn(item);
+    if(!dedupHas(mod, sig)){ dedupAdd(mod, sig); return item; }
+  }
+  return genFn();
+}
+
+/* ========= App Shell ========= */
+const modules=[
+  {id:"seq", title:"Sequences", view:viewSequences},
+  {id:"stats", title:"Statistik", view:viewStats},
+  {id:"settings", title:"Einstellungen", view:viewSettings}
+];
+let currentTab = localStorage.getItem("qprep_tab") || "seq";
+function renderTabs(){
+  const nav=$("#tabs"); nav.innerHTML="";
+  modules.forEach(m=>{
+    const b=document.createElement("button"); b.textContent=m.title;
+    b.className = currentTab===m.id? "active":""; b.onclick = ()=>{ currentTab=m.id; localStorage.setItem("qprep_tab", currentTab); render(); };
+    nav.appendChild(b);
+  });
+}
+function render(){ renderTabs(); $("#app").innerHTML=""; (modules.find(x=>x.id===currentTab)||modules[0]).view($("#app")); }
+render();
+
+/* Header buttons */
+$("#exportJson").onclick=()=>download(`qprep_stats_${new Date().toISOString().slice(0,10)}.json`, JSON.stringify(DB,null,2), "application/json");
+$("#exportCsv").onclick=()=>{
+  const rows=[["module","date","score","correct","total","avgMs","detail_json","settings_json"]];
+  for(const s of DB.sessions){
+    rows.push([s.module, s.date, s.stats?.score??"", s.stats?.correct??"", s.stats?.total??"", s.stats?.avgMs??"", JSON.stringify(s.perQuestion||[]), JSON.stringify(s.settings||{})]);
+  }
+  const csv = rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(",")).join("\n");
+  download(`qprep_stats_${new Date().toISOString().slice(0,10)}.csv`, csv, "text/csv");
+};
+$("#reset").onclick=()=>{ if(confirm("Wirklich alle lokalen Daten (Scores, Sessions, Dedup) löschen?")){ localStorage.removeItem(DBKEY); localStorage.removeItem(DEDUPKEY); DB=load(DBKEY,{sessions:[],highscores:{}}); DEDUP={}; render(); } };
+
+/* ========= UI helpers ========= */
+function card(html=""){ const d=document.createElement('div'); d.className="card"; d.innerHTML=html; return d; }
+function formRow(items){ const r=document.createElement('div'); r.className="row grid cols-2"; items.forEach(x=>r.appendChild(x)); return r; }
+function btn(label, onClick, cls="btn"){ const b=document.createElement('button'); b.className=cls; b.textContent=label; b.onclick=onClick; return b; }
+function numberField(label, min, max, step, value, onInput, allowFloat=false){
+  const w=document.createElement('div'); const id="n"+Math.random().toString(36).slice(2);
+  w.innerHTML=`<label for="${id}">${label}</label><input id="${id}" ${allowFloat?"":"inputmode='numeric'"} type="number" min="${min}" max="${max}" step="${step}" value="${value}">`;
+  const el=$("input",w); el.addEventListener('input', e=>onInput(allowFloat?parseFloat(e.target.value):parseInt(e.target.value))); return w;
+}
+function selectField(label, options, onChange, value){
+  const w=document.createElement('div'); const id="s"+Math.random().toString(36).slice(2);
+  w.innerHTML=`<label for="${id}">${label}</label><select id="${id}">${options.map(([v,l])=>`<option value="${v}">${l}</option>`).join("")}</select>`;
+  const sel = $("select",w); sel.value=value; sel.addEventListener('change', e=>onChange(e.target.value)); return w;
+}
+function checkboxField(label, checked, onChange){
+  const w=document.createElement('div'); const id="c"+Math.random().toString(36).slice(2);
+  w.innerHTML=`<label><input id="${id}" type="checkbox" ${checked?"checked":""}> ${label}</label>`;
+  $("#"+id, w).addEventListener('change', e=>onChange(e.target.checked)); return w;
+}
+/* table helper: allow raw HTML via {html:"..."} */
+function table(rows, headers){
+  const esc=s=>(s??"").toString().replace(/[<>&]/g, t=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[t]));
+  return `<table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead>
+  <tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${(c&&typeof c==='object'&&'html'in c)?c.html:esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+function title(id){ return {seq:"Sequences", stats:"Statistik"}[id] || id; }
+function highCard(moduleId){ const best=DB.highscores[moduleId]; const el=card(`<h3>🏆 Highscore</h3>`); el.insertAdjacentHTML("beforeend", best? `<div class="pill">Score: <b>${best.score}</b> · ${new Date(best.when).toLocaleString()}</div>` : `<div class="muted">Noch kein Highscore.</div>`); return el; }
+function timerClass(p){ if(p<0.5) return "timer green"; if(p<0.85) return "timer yellow"; return "timer red"; }
+
+/* ========= PRESETS & TARGETS: Sequences ========= */
+const PRESETS_SEQ = {
+  tradeseq: {
+    name:"TradeSeq (Flow)",
+    n:30, seconds:18*60,
+    scoring:{correct:+1, wrong:0, skip:0},
+    weights:{AP:.30, GP:.12, FIBO:.10, GROWING_DIFF:.12, ALTERNATING:.10, INTERLEAVED:.10, QUADRATIC:.08, POW_OFFSET:.05, PRIME:.03},
+    ranges:{start_min:0,start_max:1000, step_min:-50, step_max:50, factor_min:-5, factor_max:5, max_abs_value:10000},
+    allow_negatives:true, allow_fractions:false,
+    difficulty_curve:["easy","easy","easy","mid","mid","mid","hard","hard","hard"],
+    target:22
+  },
+  blue:{ // Akuna
+    name:"BlueSeq (Akuna)",
+    n:24, seconds:16*60,
+    scoring:{correct:+1, wrong:0, skip:0},
+    weights:{AP:.30, GP:.12, FIBO:.10, GROWING_DIFF:.12, ALTERNATING:.10, INTERLEAVED:.10, QUADRATIC:.08, POW_OFFSET:.05, PRIME:.03},
+    ranges:{start_min:0,start_max:1000, step_min:-50, step_max:50, factor_min:-5, factor_max:5, max_abs_value:10000},
+    allow_negatives:true, allow_fractions:false,
+    difficulty_curve:["easy","easy","mid","mid","hard","hard"],
+    target:18
+  },
+  brown:{ // Maven
+    name:"BrownSeq (Maven)",
+    n:26, seconds:15*60,
+    scoring:{correct:+1, wrong:0, skip:0},
+    weights:{AP:.30, GP:.12, FIBO:.10, GROWING_DIFF:.12, ALTERNATING:.10, INTERLEAVED:.10, QUADRATIC:.08, POW_OFFSET:.05, PRIME:.03},
+    ranges:{start_min:0,start_max:1000, step_min:-50, step_max:50, factor_min:-5, factor_max:5, max_abs_value:10000},
+    allow_negatives:true, allow_fractions:false,
+    difficulty_curve:["easy","mid","mid","hard","hard"],
+    target:22
+  }
+};
+
+/* ========= SEQUENCES (upgraded) ========= */
+function viewSequences(root){
+  root.appendChild(card(`<h2>🔗 Sequences</h2>
+    <div class="muted">Realistische Presets (Flow/Akuna/Maven). 5 Terme → nächster Term. Integer-only standardmäßig. Keine Negativpunkte; Skips ohne Malus. Dedup pro Pattern; Timer mit Ampel.</div>`));
+  const cfg={preset:"tradeseq", ...structuredClone(PRESETS_SEQ.tradeseq)};
+
+  const panel=card(); panel.appendChild(formRow([
+    selectField("Preset", Object.entries(PRESETS_SEQ).map(([k,p])=>[k,p.name]), v=>{ Object.assign(cfg, {preset:v, ...structuredClone(PRESETS_SEQ[v])}); renderConfig(); }, cfg.preset),
+    numberField("Fragen",10,60,1,cfg.n,v=>cfg.n=v),
+    numberField("Zeit (s)",60,3600,10,cfg.seconds,v=>cfg.seconds=v),
+    numberField("Ziel (Ready=100%)",1,60,1,cfg.target,v=>cfg.target=v),
+    checkboxField("Negative erlauben", cfg.allow_negatives, v=>cfg.allow_negatives=v),
+    checkboxField("Brüche erlauben", cfg.allow_fractions, v=>cfg.allow_fractions=v),
+    btn("Start", ()=>run())
+  ])); root.appendChild(panel); root.appendChild(highCard("seq"));
+
+  function renderConfig(){ /* placeholder */ }
+
+  /* ---------- Pattern generators ---------- */
+  const W_KEYS = ["AP","GP","FIBO","GROWING_DIFF","ALTERNATING","INTERLEAVED","QUADRATIC","POW_OFFSET","PRIME"];
+  function weightedPick(weights){
+    const sum=W_KEYS.reduce((a,k)=>a+(weights[k]||0),0);
+    let r=Math.random()*sum, acc=0;
+    for(const k of W_KEYS){ acc+=(weights[k]||0); if(r<=acc) return k; }
+    return "AP";
+  }
+  function primeList(n){
+    const res=[]; let x=2;
+    while(res.length<n){ let ok=true; for(let d=2; d*d<=x; d++){ if(x%d===0){ ok=false; break; } } if(ok) res.push(x); x++; }
+    return res;
+  }
+  const PRIMES = primeList(1000);
+
+  function rangesForTier(tier, baseRanges){
+    const r=structuredClone(baseRanges);
+    if(tier==="easy"){
+      r.start_max=100; r.step_min=Math.max(-10,r.step_min); r.step_max=Math.min(10,r.step_max);
+      r.factor_min = Math.max(-3, r.factor_min); r.factor_max = Math.min(3, r.factor_max);
+      r.max_abs_value = Math.min(500, r.max_abs_value);
+    } else if(tier==="mid"){
+      r.start_max=500; r.step_min=Math.max(-25,r.step_min); r.step_max=Math.min(25,r.step_max);
+      r.factor_min = Math.max(-4, r.factor_min); r.factor_max = Math.min(4, r.factor_max);
+      r.max_abs_value = Math.min(5000, r.max_abs_value);
+    } else { // hard
+      r.start_max=1000; r.step_min=Math.max(-50,r.step_min); r.step_max=Math.min(50,r.step_max);
+      r.factor_min = Math.max(-5, r.factor_min); r.factor_max = Math.min(5, r.factor_max);
+      r.max_abs_value = Math.min(10000, r.max_abs_value);
+    }
+    return r;
+  }
+
+  function withinBounds(seq, ranges){ return seq.every(v=>Number.isFinite(v) && Math.abs(v)<=ranges.max_abs_value); }
+
+  function genAP(rg){
+    const a0 = randInt(-rg.start_max, rg.start_max);
+    const d  = nonZeroInRange(rg.step_min, rg.step_max);
+    const seq=[a0,a0+d,a0+2*d,a0+3*d,a0+4*d]; const next=a0+5*d;
+    return {type:"AP", seq, next, params:{a0,d}};
+  }
+  function genGP(rg){
+    const ratios=[-5,-4,-3,-2,2,3,4,5];
+    const r = ratios[Math.floor(Math.random()*ratios.length)];
+    let a0 = randInt(1, Math.max(2, Math.floor(rg.start_max/ (Math.abs(r)**4))) );
+    if(Math.random()<0.5 && cfg.allow_negatives) a0*=-1;
+    const seq=[a0]; for(let i=1;i<5;i++) seq.push(seq[i-1]*r); const next=seq[4]*r;
+    return {type:"GP", seq, next, params:{a0,r}};
+  }
+  function genFibo(rg){
+    let a0 = randInt(0, 15); let a1 = randInt(1, 18);
+    if(!cfg.allow_negatives){ a0=Math.abs(a0); a1=Math.abs(a1); }
+    const offset = randInt(-5,5);
+    const seq=[a0,a1]; for(let i=2;i<5;i++) seq.push(seq[i-1]+seq[i-2]+offset);
+    const next=seq[4]+seq[3]+offset;
+    return {type:"FIBO", seq, next, params:{a0,a1,offset}};
+  }
+  function genGrowingDiff(rg){
+    const d0 = nonZeroInRange(rg.step_min, rg.step_max);
+    const delta = nonZeroInRange(-Math.min(10,Math.abs(d0)), Math.min(10,Math.abs(d0))+10);
+    const a0 = randInt(-rg.start_max, rg.start_max);
+    const seq=[a0]; let d=d0;
+    for(let i=1;i<5;i++){ seq.push(seq[i-1]+d); d+=delta; }
+    const next = seq[4] + d;
+    return {type:"GROWING_DIFF", seq, next, params:{a0,d0,delta}};
+  }
+  function genAlternating(rg){
+    if(Math.random()<0.6){
+      const p = randInt(2, Math.max(5, Math.abs(rg.step_max)));
+      const q = randInt(2, Math.max(5, Math.abs(rg.step_max)));
+      const a0 = randInt(-rg.start_max, rg.start_max);
+      const seq=[a0];
+      for(let i=1;i<5;i++){ const sign=(i%2===1)?+1:-1; const step=(i%2===1?p:q); seq.push(seq[i-1]+sign*step); }
+      const next = seq[4] + ((5%2===1)?+p:-q);
+      return {type:"ALTERNATING", seq, next, params:{a0,p,q}};
+    } else {
+      const r = randPick([2,3,4]);
+      const k = randInt(2,12);
+      let a0 = randInt(1, 10);
+      if(Math.random()<0.5 && cfg.allow_negatives) a0*=-1;
+      const seq=[a0];
+      for(let i=1;i<5;i++){ const op=(i%2===1)?+1:-1; seq.push(seq[i-1]*r + op*k); }
+      const next = seq[4]*r + ((5%2===1)?+k:-k);
+      return {type:"ALTERNATING", seq, next, params:{a0,r,k}};
+    }
+  }
+  function genInterleaved(rg){
+    const a0 = randInt(-rg.start_max, rg.start_max);
+    const d1 = nonZeroInRange(rg.step_min, rg.step_max);
+    const useGP = Math.random()<0.5;
+    const r = randPick([-3,-2,2,3,4]);
+    const d2 = nonZeroInRange(-10, 10);
+    const seq=[a0];
+    for(let i=1;i<5;i++){
+      if(i%2===1) seq.push(seq[i-1]+d1);
+      else seq.push(useGP ? seq[i-1]*r : seq[i-1]+d2);
+    }
+    const next = (5%2===1) ? (seq[4]+d1) : (useGP ? seq[4]*r : seq[4]+d2);
+    return {type:"INTERLEAVED", seq, next, params:{a0,d1,mode:useGP?"GP":"AP", r, d2}};
+  }
+  function genQuadratic(rg){
+    const a = randPick([-2,-1,1,2]);
+    const b = randInt(-5,5);
+    const c = randInt(-50,50);
+    const f=i=>a*i*i + b*i + c;
+    const seq=[1,2,3,4,5].map(f); const next=f(6);
+    return {type:"QUADRATIC", seq, next, params:{a,b,c}};
+  }
+  function genPowOffset(rg){
+    const pow = Math.random()<0.7 ? 2 : 3;
+    const k = randInt(-20,20);
+    const base = randInt(1, 12);
+    const f=i=> (pow===2? i*i : i*i*i ) + k;
+    const seq=[1,2,3,4,5].map(f); const next=f(6);
+    return {type:"POW_OFFSET", seq, next, params:{pow,k}};
+  }
+  function genPrime(rg){
+    const startIdx = randInt(0, 50);
+    const a0 = randInt(-rg.start_max, rg.start_max);
+    let cur=a0; const seq=[cur];
+    for(let i=1;i<5;i++){ cur = cur + PRIMES[startIdx+i]; seq.push(cur); }
+    const next = cur + PRIMES[startIdx+5];
+    return {type:"PRIME", seq, next, params:{a0,startIdx}};
+  }
+
+  function generateOne(idx){
+    const curve=cfg.difficulty_curve; const bucket=curve[Math.min(curve.length-1, Math.floor(idx/Math.ceil(cfg.n/curve.length)))];
+    const rg = rangesForTier(bucket, cfg.ranges);
+    const which = weightedPick(cfg.weights);
+    for(let t=0;t<50;t++){
+      let it;
+      if(which==="AP") it=genAP(rg);
+      else if(which==="GP") it=genGP(rg);
+      else if(which==="FIBO") it=genFibo(rg);
+      else if(which==="GROWING_DIFF") it=genGrowingDiff(rg);
+      else if(which==="ALTERNATING") it=genAlternating(rg);
+      else if(which==="INTERLEAVED") it=genInterleaved(rg);
+      else if(which==="QUADRATIC") it=genQuadratic(rg);
+      else if(which==="POW_OFFSET") it=genPowOffset(rg);
+      else it=genPrime(rg);
+      if(!cfg.allow_fractions && ![...it.seq, it.next].every(Number.isInteger)) continue;
+      if(!cfg.allow_negatives && ![...it.seq, it.next].every(v=>v>=0)) continue;
+      if(!withinBounds([...it.seq, it.next], rg)) continue;
+      return it;
+    }
+    return genAP(rg);
+  }
+  function sigOf(it){ return `${it.type}|${it.seq.join(",")}`; }
+
+  function run(){
+    const totalMs=cfg.seconds*1000; const ui=card(); root.appendChild(ui);
+    ui.innerHTML=`<div class="row" style="justify-content:space-between;align-items:center">
+      <span class="pill">Preset: ${PRESETS_SEQ[cfg.preset]?.name || "custom"}</span>
+      <span class="pill"><span id="t" class="timer">0.0s</span></span>
+      <span class="pill">Frage: <b id="qc">1</b> / ${cfg.n}</span>
+    </div>
+    <div class="question center" id="q" style="font-size:30px"></div>
+    <div class="row" style="align-items:center">
+      <div style="flex:1">
+        <label>Antwort</label>
+        <input id="a" inputmode="decimal" placeholder="Zahl">
+      </div>
+      <button class="btn" id="minus">−</button>
+      <button class="btn" id="ok">OK</button>
+      <button class="btn ghost" id="skip">Skip</button>
+      <button class="btn ghost" id="pause">Pause</button>
+      <button class="btn danger" id="abort">Abbrechen</button>
+    </div>
+    <div class="muted" id="info"></div>`;
+
+    const el={t:$("#t",ui),qc:$("#qc",ui),q:$("#q",ui),a:$("#a",ui),ok:$("#ok",ui),skip:$("#skip",ui),pause:$("#pause",ui),abort:$("#abort",ui),minus:$("#minus",ui),info:$("#info",ui)};
+    let i=0, correct=0, per=[], cur=null;
+    let paused=false, pauseT=0, tStart=performance.now(), tPause=0, running=true, qStart=now();
+
+    function tick(){ let tNow=performance.now(); if(paused) tNow=tPause;
+      const used=tNow-tStart-pauseT; const left=Math.max(0,totalMs-used);
+      const pUsed = (used/totalMs); el.t.className = timerClass(pUsed);
+      el.t.textContent=(left/1000).toFixed(1)+"s";
+      if(left<=0&&running){finish();return;} if(running) requestAnimationFrame(tick);
+    }
+    function next(){
+      if(i>=cfg.n){ finish(); return; }
+      cur = dedupFindNew("seq", ()=>generateOne(i), sigOf);
+      el.q.textContent = cur.seq.join(" , ")+" , ?"; el.a.value=""; el.a.focus(); el.qc.textContent = String(i+1);
+      el.info.textContent = `Scoring: +${cfg.scoring.correct} / ${cfg.scoring.wrong>=0?"+":""}${cfg.scoring.wrong} (Skip ${cfg.scoring.skip}) · Pattern: ${cur.type}`;
+      qStart=now();
+    }
+    function parseNum(s){ return Number(s.replace(",", ".").trim()); }
+    function submit(kind){
+      const ms=Math.round(now()-qStart);
+      const raw=el.a.value.trim(); const user=(kind==="skip"||raw==="")?null:parseNum(raw);
+      const ok = (user!==null && Math.abs(user-cur.next)<1e-9); if(ok) correct++;
+      per.push({pattern:cur.type, q:cur.seq.join(", "), user, ans:cur.next, correct:ok, ms});
+      i++; next();
+    }
+    function pause(){ if(!paused){paused=true; tPause=performance.now(); el.pause.textContent="Resume";} else {paused=false; pauseT += performance.now()-tPause; el.pause.textContent="Pause"; requestAnimationFrame(tick);} }
+    function abort(){ if(confirm("Ohne Speichern beenden?")){ running=false; ui.innerHTML=`<div class="card">Abgebrochen – nicht gespeichert.</div>`; } }
+    function finish(){
+      running=false; const avg = per.length? Math.round(per.reduce((a,x)=>a+x.ms,0)/per.length):0;
+      const stats={correct,total:cfg.n,avgMs:avg,score:correct};
+      const readiness = clamp(Math.round((correct/(cfg.target||cfg.n))*100),0,200);
+      pushSession({module:"seq",preset:cfg.preset,stats,perQuestion:per,settings:{...cfg}});
+
+      const byType={}; for(const x of per){ (byType[x.pattern] ||= []).push(x); }
+      const rows=[["Pattern","Korrekt/Total","Ø Zeit","Accuracy"," "]];
+      const W_KEYS = ["AP","GP","FIBO","GROWING_DIFF","ALTERNATING","INTERLEAVED","QUADRATIC","POW_OFFSET","PRIME"];
+      for(const t of W_KEYS){
+        const arr = byType[t]||[]; if(arr.length===0) continue;
+        const c = arr.filter(x=>x.correct).length, n=arr.length, acc = n? (c/n*100):0;
+        const avgT = arr.length? Math.round(arr.reduce((a,x)=>a+x.ms,0)/arr.length):0;
+        rows.push([t, `${c}/${n}`, (avgT/1000).toFixed(2)+"s", acc.toFixed(0)+"%", {html:`<div class="bar" style="width:${Math.min(100,acc)}%"></div>`}]);
+      }
+      const detailTable = table(per.map((x,idx)=>[idx+1, x.pattern, x.q, x.user==null?"—":x.user, x.ans, (x.ms/1000).toFixed(2)+"s", x.correct?"✅":"❌"]),["#","Pattern","Sequenz","Deine","Korrekt","Zeit","OK"]);
+      ui.innerHTML = `<h3>Ergebnis</h3>
+        <div class="row">
+          <span class="pill">Richtig: <b class="ok">${stats.correct}</b> / ${stats.total}</span>
+          <span class="pill">Ø Zeit: <b>${fmtMs(stats.avgMs)}</b></span>
+          <span class="pill">Ziel: <b>${cfg.target}</b></span>
+          <span class="pill">Ready: <b>${readiness}%</b></span>
+        </div>
+        <div class="card"><h4>Pattern-Heatmap</h4>${table(rows.slice(1), rows[0])}</div>
+        <div class="card"><h4>Alle Items</h4>${detailTable}</div>`;
+      render();
+    }
+
+    el.ok.onclick=()=>submit("ok"); el.skip.onclick=()=>submit("skip"); el.pause.onclick=pause; el.abort.onclick=abort;
+    el.minus.onclick=()=>{ el.a.value = (el.a.value.startsWith("-")? el.a.value.slice(1) : "-"+el.a.value); el.a.focus(); };
+    el.a.addEventListener("keydown", e=>{ if(e.key==="Enter") submit("ok"); });
+    el.a.addEventListener("input", ()=>{ const raw=el.a.value.trim(); if(!raw) return; const v=parseNum(raw); if(Number.isFinite(v) && Math.abs(v - (cur?.next??NaN))<1e-9) submit("ok"); });
+    requestAnimationFrame(tick); next();
+  }
+
+  // helpers
+  function randInt(a,b){ const mn=Math.min(a,b), mx=Math.max(a,b); return Math.floor(Math.random()*(mx-mn+1))+mn; }
+  function nonZeroInRange(a,b){ let v=0; let guard=0; while(v===0 && guard++<50) v=randInt(a,b); return v===0?1:v; }
+  function randPick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+}
+
+/* ========= Stats & Settings ========= */
+function viewStats(root){
+  root.appendChild(card(`<h2>📊 Statistik</h2><div class="muted">Sessions, Ø-Zeiten, Accuracy & Highscores. Klick auf „Details“ pro Session.</div>`));
+  const by={}; DB.sessions.forEach(s=>{ (by[s.module] ||= []).push(s); });
+  for(const [mod, arr] of Object.entries(by)){
+    const avg = Math.round(arr.reduce((a,x)=>a+(x.stats?.avgMs||0),0)/(arr.length||1));
+    const acc = (arr.reduce((a,x)=>a+(x.stats?.correct||0),0)) / (arr.reduce((a,x)=>a+(x.stats?.total||0),0)) * 100;
+    const el = card(`<h3>${title(mod)}</h3><div class="row">
+      <span class="pill">Sessions: <b>${arr.length}</b></span>
+      <span class="pill">Ø Zeit/Frage: <b>${isFinite(avg)?fmtMs(avg):"—"}</b></span>
+      <span class="pill">Ø Accuracy: <b>${isFinite(acc)?acc.toFixed(1):"—"}%</b></span>
+      <span class="pill">Highscore: <b>${DB.highscores[mod]?.score ?? "—"}</b></span>
+    </div>`);
+    const rows = arr.slice(-50).map((s,i)=>[i+1, new Date(s.date).toLocaleString(), s.stats.correct+"/"+s.stats.total, (s.stats.avgMs/1000).toFixed(2)+"s", s.stats.score ?? "—", {html:`<span class="linklike" data-idx="${DB.sessions.indexOf(s)}">Details</span>`}]);
+    el.insertAdjacentHTML("beforeend", table(rows, ["#","Datum","Richtig","Ø Zeit","Score","Session"]));
+    root.appendChild(el);
+  }
+  $$(".linklike").forEach(a=>a.addEventListener("click",(e)=>{
+    const idx = +e.target.getAttribute("data-idx");
+    const s = DB.sessions[idx]; if(!s) return;
+    const dlg = card(`<h3>Session-Details (${new Date(s.date).toLocaleString()})</h3>`);
+    const per = s.perQuestion||[];
+    const rows = per.map((x,i)=>[i+1, x.pattern||"", x.q||"", (x.user==null?"—":x.user), x.ans, (x.ms/1000).toFixed(2)+"s", x.correct?"✅":"❌"]);
+    dlg.insertAdjacentHTML("beforeend", table(rows, ["#","Pattern","Prompt","Your","Correct","Zeit","OK"]));
+    const btns = document.createElement("div"); btns.className="row";
+    const csvRows=[["#","pattern","prompt","your","correct","ms","ok"]]; per.forEach((x,i)=>csvRows.push([i+1,x.pattern||"",x.q||"",x.user==null?"":x.user,x.ans,x.ms,x.correct?1:0]));
+    const csv=csvRows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const txt=per.map((x,i)=>`${i+1}. [${x.pattern||""}] ${x.q} -> your=${x.user==null?"":x.user} | correct=${x.ans} | ${x.correct?"OK":"X"} | ${x.ms}ms`).join("\n");
+    btns.appendChild(btn("Export CSV", ()=>download(`session_${idx}.csv`,csv,"text/csv")));
+    btns.appendChild(btn("Export TXT", ()=>download(`session_${idx}.txt`,txt,"text/plain")));
+    dlg.appendChild(btns); $("#app").prepend(dlg);
+  }));
+}
+function viewSettings(root){
+  root.appendChild(card(`<h2>⚙️ Einstellungen</h2><div class="muted">Dedup-Pools zurücksetzen.</div>`));
+  const panel=card(); const mods=["seq"];
+  panel.appendChild(formRow([
+    ...mods.map(id=>btn(`Reset '${id}'-Pool`, ()=>{ delete DEDUP[id]; saveDedup(); alert(`Pool ${id} geleert.`); }))
+  ]));
+  root.appendChild(panel);
+}
+</script>
+</main>
+</body>
+</html>
