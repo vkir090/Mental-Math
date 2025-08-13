@@ -74,25 +74,7 @@ function dedupHas(mod,s){ dedupInit(mod); return !!DEDUP[mod].set[s]; }
 function dedupAdd(mod,s,cap=50000){ dedupInit(mod); if(!DEDUP[mod].set[s]){ DEDUP[mod].set[s]=1; DEDUP[mod].list.push(s); if(DEDUP[mod].list.length>cap){const old=DEDUP[mod].list.shift(); delete DEDUP[mod].set[old];} save(DEDUPKEY,DEDUP);} }
 function dedupFindNew(mod,gen,sig,maxTries=200){ for(let i=0;i<maxTries;i++){ const it=gen(); const k=sig(it); if(!dedupHas(mod,k)){ dedupAdd(mod,k); return it; } } return gen(); }
 
-/***** App shell *****/
-const tabs=[{id:'mental',label:'Mental Math',view:viewMental},{id:'stats',label:'Statistik',view:viewStats},{id:'settings',label:'Einstellungen',view:viewSettings}];
-let currentTab=localStorage.getItem('mm_tab')||'mental';
-function renderTabs(){ const n=$('#tabs'); n.innerHTML=''; tabs.forEach(t=>{ const b=document.createElement('button'); b.textContent=t.label; b.className=currentTab===t.id?'active':''; b.onclick=()=>{currentTab=t.id; localStorage.setItem('mm_tab',currentTab); render();}; n.appendChild(b); }); }
-function render(){ renderTabs(); const root=$('#app'); root.innerHTML=''; (tabs.find(t=>t.id===currentTab)||tabs[0]).view(root); }
-render();
-
-/***** Exports/Reset *****/
-$('#exportJson').onclick=()=>dl('mm_stats_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(DB,null,2),'application/json');
-$('#exportCsv').onclick=()=>{
-  const rows=[["module","date","score","correct","total","avgMs","detail_json","settings_json"]];
-  for(const s of DB.sessions){
-    rows.push(['mental',s.date,s.stats?.score??'',s.stats?.correct??'',s.stats?.total??'',s.stats?.avgMs??'',JSON.stringify(s.perQuestion||[]),JSON.stringify(s.settings||{})]);
-  }
-  dl('mm_stats_'+new Date().toISOString().slice(0,10)+'.csv', rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n'), 'text/csv');
-};
-$('#resetAll').onclick=()=>{ if(confirm('Alle lokalen Daten (Sessions/Highscores/Dedup) löschen?')){ localStorage.removeItem(DBKEY); localStorage.removeItem(DEDUPKEY); DB=load(DBKEY,{sessions:[],highscores:{}}); DEDUP={}; render(); } };
-
-/***** Presets/Targets *****/
+/***** Presets/Targets (VOR render-Aufruf!) *****/
 const PRESETS={
   blue:{label:'Blue – Akuna (80/8)', n:80, seconds:480, scoring:{correct:+1, wrong:-1, skip:0}, target:60},
   brown:{label:'Brown – Maven (40/6)', n:40, seconds:360, scoring:{correct:+1, wrong:0,  skip:0}, target:34},
@@ -123,6 +105,23 @@ function table(rows,headers){
   <tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${(c??'').toString().replace(/[<>&]/g, s=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[s]))}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 }
 
+/***** App shell *****/
+const tabs=[{id:'mental',label:'Mental Math',view:viewMental},{id:'stats',label:'Statistik',view:viewStats},{id:'settings',label:'Einstellungen',view:viewSettings}];
+let currentTab=localStorage.getItem('mm_tab')||'mental';
+function renderTabs(){ const n=$('#tabs'); n.innerHTML=''; tabs.forEach(t=>{ const b=document.createElement('button'); b.textContent=t.label; b.className=currentTab===t.id?'active':''; b.onclick=()=>{currentTab=t.id; localStorage.setItem('mm_tab',currentTab); render();}; n.appendChild(b); }); }
+function render(){ renderTabs(); const root=$('#app'); root.innerHTML=''; (tabs.find(t=>t.id===currentTab)||tabs[0]).view(root); }
+
+/***** Exports/Reset *****/
+$('#exportJson').onclick=()=>dl('mm_stats_'+new Date().toISOString().slice(0,10)+'.json',JSON.stringify(DB,null,2),'application/json');
+$('#exportCsv').onclick=()=>{
+  const rows=[["module","date","score","correct","total","avgMs","detail_json","settings_json"]];
+  for(const s of DB.sessions){
+    rows.push(['mental',s.date,s.stats?.score??'',s.stats?.correct??'',s.stats?.total??'',s.stats?.avgMs??'',JSON.stringify(s.perQuestion||[]),JSON.stringify(s.settings||{})]);
+  }
+  dl('mm_stats_'+new Date().toISOString().slice(0,10)+'.csv', rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')).join('\n'), 'text/csv');
+};
+$('#resetAll').onclick=()=>{ if(confirm('Alle lokalen Daten (Sessions/Highscores/Dedup) löschen?')){ localStorage.removeItem(DBKEY); localStorage.removeItem(DEDUPKEY); DB=load(DBKEY,{sessions:[],highscores:{}}); DEDUP={}; render(); } };
+
 /***** MENTAL MATH *****/
 function viewMental(root){
   root.appendChild(card(`<h2>🧮 Mental Math</h2>
@@ -140,7 +139,6 @@ function viewMental(root){
     btn('Start', ()=>run())
   ]));
   root.appendChild(panel);
-  // Highscore
   const best=DB.highscores.mental; const hi=card('<h3>🏆 Highscore</h3>');
   hi.insertAdjacentHTML('beforeend', best?`<div class="pill">Score: <b>${best.score}</b> · ${new Date(best.when).toLocaleString()}</div>`:'<div class="muted">Noch kein Highscore.</div>');
   root.appendChild(hi);
@@ -185,12 +183,10 @@ function viewMental(root){
     const el={t:$('#t',ui),qc:$('#qc',ui),q:$('#q',ui),a:$('#a',ui),ok:$('#ok',ui),skip:$('#skip',ui),pause:$('#pause',ui),abort:$('#abort',ui),info:$('#info',ui),minus:$('#minus',ui)};
     let i=0, correct=0, score=0, per=[], cur=null; 
     let paused=false, pauseT=0, tStart=performance.now(), tPause=0, running=true;
-    // question-level pause accounting
     let qStart=now(), qPaused=0, qPauseStart=0;
 
     function tick(){ let tNow=performance.now(); if(paused) tNow=tPause; const used=tNow-tStart-pauseT; const left=Math.max(0,totalMs-used); el.t.textContent=(left/1000).toFixed(1)+'s'; if(left<=0&&running){finish();return;} if(running) requestAnimationFrame(tick); }
     function next(){ if(i>=cfg.n){ finish(); return; } cur=dedupFindNew('mental',genQ,sigOf); el.q.textContent=cur.txt+' = ?'; el.a.value=''; el.a.focus(); el.qc.textContent=String(i+1); el.info.textContent=`Bewertung: +${cfg.scoring.correct} / ${(cfg.scoring.wrong>=0?'+':'')}${cfg.scoring.wrong}`; qStart=now(); qPaused=0; }
-
     function submit(kind){
       const raw=el.a.value.trim();
       const user=(kind==='skip'||raw==='')?null:Number(raw.replace(',','.'));
@@ -201,13 +197,11 @@ function viewMental(root){
       per.push({q:cur.txt,user,ans:cur.ans,correct:ok,ms});
       i++; next();
     }
-
     function pause(){ 
       if(!paused){ paused=true; tPause=performance.now(); qPauseStart=now(); el.pause.textContent='Resume'; } 
       else { paused=false; pauseT += performance.now()-tPause; qPaused += now()-qPauseStart; el.pause.textContent='Pause'; requestAnimationFrame(tick);} 
     }
     function abort(){ if(confirm('Ohne Speichern beenden?')){ running=false; ui.innerHTML='<div class="card">Abgebrochen – nicht gespeichert.</div>'; } }
-
     function finish(){
       running=false; 
       const avg = per.length? Math.round(per.reduce((a,x)=>a+x.ms,0)/per.length):0;
@@ -239,10 +233,7 @@ function viewMental(root){
     el.pause.onclick=pause; 
     el.abort.onclick=abort;
     el.a.addEventListener('keydown',e=>{ if(e.key==='Enter') submit('ok'); });
-    el.a.addEventListener('input',()=>{ 
-      if(!cfg.auto) return; const raw=el.a.value.trim(); if(!raw) return; 
-      const v=Number(raw.replace(',','.')); if(Math.abs(v-(cur?.ans??NaN))<1e-9) submit('ok'); 
-    });
+    el.a.addEventListener('input',()=>{ if(!cfg.auto) return; const raw=el.a.value.trim(); if(!raw) return; const v=Number(raw.replace(',','.')); if(Math.abs(v-(cur?.ans??NaN))<1e-9) submit('ok'); });
     el.minus.onclick=()=>{ if(!el.a.value.startsWith('-')) el.a.value='-'+el.a.value; el.a.focus(); const pos=el.a.value.length; el.a.setSelectionRange(pos,pos); };
 
     requestAnimationFrame(tick); next();
@@ -271,7 +262,6 @@ function viewStats(root){
   ]);
   el.insertAdjacentHTML('beforeend', table(rows,['#','Datum','Richtig','Ø Zeit','Score','Session']));
   root.appendChild(el);
-  // quick TXT export of one session when clicking "Details"
   el.addEventListener('click', (ev)=>{
     const t=ev.target.closest('.linklike'); if(!t) return;
     const idx=+t.dataset.idx; const s=DB.sessions[idx];
@@ -291,6 +281,9 @@ function viewSettings(root){
   ])); 
   root.appendChild(box);
 }
+
+/* Ganz zum Schluss render aufrufen (nachdem alles deklariert ist) */
+render();
 </script>
 </main>
 </body>
