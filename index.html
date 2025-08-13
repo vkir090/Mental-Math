@@ -100,9 +100,15 @@ function checkboxField(label,checked,onCh){
   w.innerHTML=`<label><input id="${id}" type="checkbox" ${checked?'checked':''}> ${label}</label>`;
   $('#'+id,w).addEventListener('change',e=>onCh(e.target.checked)); return w;
 }
-function table(rows,headers){
-  return `<table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
-  <tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${(c??'').toString().replace(/[<>&]/g, s=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[s]))}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+function table(rows, headers, rawCols = []) {
+  const esc = s => (s ?? '').toString().replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+  const thead = `<thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>`;
+  const tbody = `<tbody>${
+    rows.map(r => `<tr>${
+      r.map((c, idx) => `<td>${rawCols.includes(idx) ? (c ?? '') : esc(c)}</td>`).join('')
+    }</tr>`).join('')
+  }</tbody>`;
+  return `<table>${thead}${tbody}</table>`;
 }
 
 /***** App shell *****/
@@ -260,7 +266,8 @@ function viewStats(root){
     s.stats.score ?? '—',
     `<span class="linklike" data-idx="${DB.sessions.indexOf(s)}">Details</span>`
   ]);
-  el.insertAdjacentHTML('beforeend', table(rows,['#','Datum','Richtig','Ø Zeit','Score','Session']));
+  /* WICHTIG: Spalte 5 (Index 5) als RAW rendern, damit <span> nicht escaped wird */
+  el.insertAdjacentHTML('beforeend', table(rows,['#','Datum','Richtig','Ø Zeit','Score','Session'], [5]));
   root.appendChild(el);
   el.addEventListener('click', (ev)=>{
     const t=ev.target.closest('.linklike'); if(!t) return;
